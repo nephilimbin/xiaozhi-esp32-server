@@ -35,8 +35,7 @@ class WebSocketServer:
             asr.create_instance(
                 (
                     self.config["selected_module"]["ASR"]
-                    if not "type"
-                    in self.config["ASR"][self.config["selected_module"]["ASR"]]
+                    if "type" not in self.config["ASR"][self.config["selected_module"]["ASR"]]
                     else self.config["ASR"][self.config["selected_module"]["ASR"]][
                         "type"
                     ]
@@ -47,8 +46,7 @@ class WebSocketServer:
             llm.create_instance(
                 (
                     self.config["selected_module"]["LLM"]
-                    if not "type"
-                    in self.config["LLM"][self.config["selected_module"]["LLM"]]
+                    if "type" not in self.config["LLM"][self.config["selected_module"]["LLM"]]
                     else self.config["LLM"][self.config["selected_module"]["LLM"]][
                         "type"
                     ]
@@ -58,8 +56,7 @@ class WebSocketServer:
             tts.create_instance(
                 (
                     self.config["selected_module"]["TTS"]
-                    if not "type"
-                    in self.config["TTS"][self.config["selected_module"]["TTS"]]
+                    if "type" not in self.config["TTS"][self.config["selected_module"]["TTS"]]
                     else self.config["TTS"][self.config["selected_module"]["TTS"]][
                         "type"
                     ]
@@ -71,8 +68,7 @@ class WebSocketServer:
             intent.create_instance(
                 (
                     self.config["selected_module"]["Intent"]
-                    if not "type"
-                    in self.config["Intent"][self.config["selected_module"]["Intent"]]
+                    if "type" not in self.config["Intent"][self.config["selected_module"]["Intent"]]
                     else self.config["Intent"][
                         self.config["selected_module"]["Intent"]
                     ]["type"]

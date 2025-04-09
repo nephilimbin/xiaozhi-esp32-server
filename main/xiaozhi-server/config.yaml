@@ -16,24 +16,24 @@ server:
     # 设备的token，可以在编译固件的环节，写入你自己定义的token
     # 固件上的token和以下的token如果能对应，才能连接本服务端
     tokens:
-      - token: "your-token1" # 设备1的token
-        name: "your-device-name1"  # 设备1标识
-      - token: "your-token2"  # 设备2的token
-        name: "your-device-name2" # 设备2标识
+      - token: 'your-token1' # 设备1的token
+        name: 'your-device-name1' # 设备1标识
+      - token: 'your-token2' # 设备2的token
+        name: 'your-device-name2' # 设备2标识
     # 可选:设备白名单，如果设置了白名单，那么白名单的机器无论是什么token都可以连接。
     #allowed_devices:
     #  - "24:0A:C4:1D:3B:F0"  # MAC地址列表
 log:
   # 设置控制台输出的日志格式，时间、日志级别、标签、消息
-  log_format: "<green>{time:YYMMDD HH:mm:ss}</green>[{version}_{selected_module}][<light-blue>{extra[tag]}</light-blue>]-<level>{level}</level>-<light-green>{message}</light-green>"
+  log_format: '<green>{time:YYMMDD HH:mm:ss}</green>[{version}_{selected_module}][<light-blue>{extra[tag]}</light-blue>]-<level>{level}</level>-<light-green>{message}</light-green>'
   # 设置日志文件输出的格式，时间、日志级别、标签、消息
-  log_format_file: "{time:YYYY-MM-DD HH:mm:ss} - {version}_{selected_module} - {name} - {level} - {extra[tag]} - {message}"
+  log_format_file: '{time:YYYY-MM-DD HH:mm:ss} - {version}_{selected_module} - {name} - {level} - {extra[tag]} - {message}'
   # 设置日志等级：INFO、DEBUG
   log_level: INFO
   # 设置日志路径
   log_dir: tmp
   # 设置日志文件
-  log_file: "server.log"
+  log_file: 'server.log'
   # 设置数据文件路径
   data_dir: data
 
@@ -50,11 +50,11 @@ enable_greeting: true
 # 说完话是否开启提示音
 enable_stop_tts_notify: false
 # 说完话是否开启提示音，音效地址
-stop_tts_notify_voice: "config/assets/tts_notify.mp3"
+stop_tts_notify_voice: 'config/assets/tts_notify.mp3'
 
 CMD_exit:
-  - "退出"
-  - "关闭"
+  - '退出'
+  - '关闭'
 
 xiaozhi:
   type: hello
@@ -69,22 +69,22 @@ xiaozhi:
 # 模块测试配置
 module_test:
   test_sentences:
-    - "你好，请介绍一下你自己"
+    - '你好，请介绍一下你自己'
     - "What's the weather like today?"
-    - "请用100字概括量子计算的基本原理和应用前景"
+    - '请用100字概括量子计算的基本原理和应用前景'
 
 # 唤醒词，用于识别唤醒词还是讲话内容
 wakeup_words:
-  - "你好小智"
-  - "你好小志"
-  - "小爱同学"
-  - "你好小鑫"
-  - "你好小新"
-  - "小美同学"
-  - "小龙小龙"
-  - "喵喵同学"
-  - "小滨小滨"
-  - "小冰小冰"
+  - '你好小智'
+  - '你好小志'
+  - '小爱同学'
+  - '你好小鑫'
+  - '你好小新'
+  - '小美同学'
+  - '小龙小龙'
+  - '喵喵同学'
+  - '小滨小滨'
+  - '小冰小冰'
 
 # 插件的基础配置
 plugins:
@@ -92,15 +92,15 @@ plugins:
   # 这个密钥是项目共用的key，用多了可能会被限制
   # 想稳定一点就自行申请替换，每天有1000次免费调用
   # 申请地址：https://console.qweather.com/#/apps/create-key/over
-  get_weather: { "api_key": "a861d0d5e7bf4ee1a83d9a9e4f96d4da", "default_location": "广州" }
+  get_weather: { 'api_key': 'a861d0d5e7bf4ee1a83d9a9e4f96d4da', 'default_location': '广州' }
   # 获取新闻插件的配置，这里根据需要的新闻类型传入对应的url链接，默认支持社会、科技、财经新闻
   # 更多类型的新闻列表查看 https://www.chinanews.com.cn/rss/
   get_news:
-    default_rss_url: "https://www.chinanews.com.cn/rss/society.xml"
+    default_rss_url: 'https://www.chinanews.com.cn/rss/society.xml'
     category_urls:
-      society: "https://www.chinanews.com.cn/rss/society.xml"
-      world: "https://www.chinanews.com.cn/rss/world.xml"
-      finance: "https://www.chinanews.com.cn/rss/finance.xml"
+      society: 'https://www.chinanews.com.cn/rss/society.xml'
+      world: 'https://www.chinanews.com.cn/rss/world.xml'
+      finance: 'https://www.chinanews.com.cn/rss/finance.xml'
   home_assistant:
     devices:
       - 客厅,玩具灯,switch.cuco_cn_460494544_cp1_on_p_2_1
@@ -108,11 +108,11 @@ plugins:
     base_url: http://homeassistant.local:8123
     api_key: 你的home assistant api访问令牌
   play_music:
-    music_dir: "./music"  # 音乐文件存放路径，将从该目录及子目录下搜索音乐文件
+    music_dir: './music' # 音乐文件存放路径，将从该目录及子目录下搜索音乐文件
     music_ext: # 音乐文件类型，p3格式效率最高
-      - ".mp3"
-      - ".wav"
-      - ".p3"
+      - '.mp3'
+      - '.wav'
+      - '.p3'
     refresh_time: 300 # 刷新音乐列表的时间间隔，单位为秒
 
 # #####################################################################################
@@ -224,7 +224,7 @@ VAD:
   SileroVAD:
     threshold: 0.5
     model_dir: models/snakers4_silero-vad
-    min_silence_duration_ms: 700  # 如果说话停顿比较长，可以把这个值设置大一些
+    min_silence_duration_ms: 700 # 如果说话停顿比较长，可以把这个值设置大一些
 
 LLM:
   # 所有openai类型均可以修改超参，以AliLLM为例
@@ -236,11 +236,11 @@ LLM:
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     model_name: qwen-turbo
     api_key: 你的deepseek web key
-    temperature: 0.7  # 温度值
-    max_tokens: 500   # 最大生成token数
-    top_p: 1         
-    top_k: 50        
-    frequency_penalty: 0  # 频率惩罚
+    temperature: 0.7 # 温度值
+    max_tokens: 500 # 最大生成token数
+    top_p: 1
+    top_k: 50
+    frequency_penalty: 0 # 频率惩罚
   AliAppLLM:
     # 定义LLM API类型
     type: AliBL
@@ -248,7 +248,7 @@ LLM:
     app_id: 你的app_id
     # 可在这里找到你的 api_key https://bailian.console.aliyun.com/?apiKey=1#/api-key
     api_key: 你的api_key
-    # 是否不使用本地prompt：true|false (默不用请在百练应用中设置prompt) 
+    # 是否不使用本地prompt：true|false (默不用请在百练应用中设置prompt)
     is_no_prompt: true
     # Ali_memory_id：false（不使用）|你的memory_id（请在百练应用中设置中获取）
     # Tips！：Ali_memory未实现多用户存储记忆(记忆按id调用)
@@ -277,12 +277,12 @@ LLM:
     # 可在这里找到你的api key https://bigmodel.cn/usercenter/proj-mgmt/apikeys
     model_name: glm-4-flash
     url: https://open.bigmodel.cn/api/paas/v4/
-    api_key: 你的chat-glm web key
+    api_key: c17a630da3634f159063cce583fc7032.dhUhqFfUqNvrwI6m
   OllamaLLM:
     # 定义LLM API类型
     type: ollama
     model_name: qwen2.5 #  使用的模型名称，需要预先使用ollama pull下载
-    base_url: http://localhost:11434  # Ollama服务地址
+    base_url: http://localhost:11434 # Ollama服务地址
   DifyLLM:
     # 定义LLM API类型
     type: dify
@@ -301,17 +301,17 @@ LLM:
     # token申请地址： https://aistudio.google.com/apikey
     # 若部署地无法访问接口，需要开启科学上网
     api_key: 你的gemini web key
-    model_name: "gemini-2.0-flash"
-    http_proxy: ""  #"http://127.0.0.1:10808"
-    https_proxy: "" #http://127.0.0.1:10808"
+    model_name: 'gemini-2.0-flash'
+    http_proxy: '' #"http://127.0.0.1:10808"
+    https_proxy: '' #http://127.0.0.1:10808"
   CozeLLM:
     # 定义LLM API类型
     type: coze
     # 你可以在这里找到个人令牌
     # https://www.coze.cn/open/oauth/pats
     # bot_id和user_id的内容写在引号之内
-    bot_id: "你的bot_id"
-    user_id: "你的user_id"
+    bot_id: '你的bot_id'
+    user_id: '你的user_id'
     personal_access_token: 你的coze个人令牌
   LMStudioLLM:
     # 定义LLM API类型
@@ -328,20 +328,20 @@ LLM:
     # https://cloud.tryfastgpt.ai/account/apikey
     api_key: fastgpt-xxx
     variables:
-      k: "v"
-      k2: "v2"
+      k: 'v'
+      k2: 'v2'
   XinferenceLLM:
     # 定义LLM API类型
     type: xinference
     # Xinference服务地址和模型名称
-    model_name: qwen2.5:72b-AWQ  # 使用的模型名称，需要预先在Xinference启动对应模型
-    base_url: http://localhost:9997  # Xinference服务地址
+    model_name: qwen2.5:72b-AWQ # 使用的模型名称，需要预先在Xinference启动对应模型
+    base_url: http://localhost:9997 # Xinference服务地址
   XinferenceSmallLLM:
     # 定义轻量级LLM API类型，用于意图识别
     type: xinference
     # Xinference服务地址和模型名称
-    model_name: qwen2.5:3b-AWQ  # 使用的小模型名称，用于意图识别
-    base_url: http://localhost:9997  # Xinference服务地址
+    model_name: qwen2.5:3b-AWQ # 使用的小模型名称，用于意图识别
+    base_url: http://localhost:9997 # Xinference服务地址
 TTS:
   # 当前支持的type为edge、doubao，可自行适配
   EdgeTTS:
@@ -360,7 +360,7 @@ TTS:
     api_url: https://openspeech.bytedance.com/api/v1/tts
     voice: BV001_streaming
     output_dir: tmp/
-    authorization: "Bearer;"
+    authorization: 'Bearer;'
     appid: 你的火山引擎语音合成服务appid
     access_token: 你的火山引擎语音合成服务access_token
     cluster: volcano_tts
@@ -394,8 +394,8 @@ TTS:
     output_dir: tmp/
     response_format: wav
     reference_id: null
-    reference_audio: ["/tmp/test.wav",]
-    reference_text: ["你弄来这些吟词宴曲来看，还是这些混话来欺负我。",]
+    reference_audio: ['/tmp/test.wav']
+    reference_text: ['你弄来这些吟词宴曲来看，还是这些混话来欺负我。']
     normalize: true
     max_new_tokens: 1024
     chunk_length: 200
@@ -403,27 +403,27 @@ TTS:
     repetition_penalty: 1.2
     temperature: 0.7
     streaming: false
-    use_memory_cache: "on"
+    use_memory_cache: 'on'
     seed: null
     channels: 1
     rate: 44100
-    api_key: "你的api_key"
-    api_url: "http://127.0.0.1:8080/v1/tts"
+    api_key: '你的api_key'
+    api_url: 'http://127.0.0.1:8080/v1/tts'
   GPT_SOVITS_V2:
     # 定义TTS API类型
     #启动tts方法：
     #python api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/caixukun.yaml
     type: gpt_sovits_v2
-    url: "http://127.0.0.1:9880/tts"
+    url: 'http://127.0.0.1:9880/tts'
     output_dir: tmp/
-    text_lang: "auto"
-    ref_audio_path: "caixukun.wav"
-    prompt_text: ""
-    prompt_lang: "zh"
+    text_lang: 'auto'
+    ref_audio_path: 'caixukun.wav'
+    prompt_text: ''
+    prompt_lang: 'zh'
     top_k: 5
     top_p: 1
     temperature: 1
-    text_split_method: "cut0"
+    text_split_method: 'cut0'
     batch_size: 1
     batch_threshold: 0.75
     split_bucket: true
@@ -439,16 +439,16 @@ TTS:
     #启动tts方法：
     #python api.py
     type: gpt_sovits_v3
-    url: "http://127.0.0.1:9880"
+    url: 'http://127.0.0.1:9880'
     output_dir: tmp/
-    text_language: "auto"
-    refer_wav_path: "caixukun.wav"
-    prompt_language: "zh"
-    prompt_text: ""
+    text_language: 'auto'
+    refer_wav_path: 'caixukun.wav'
+    prompt_language: 'zh'
+    prompt_text: ''
     top_k: 15
     top_p: 1.0
     temperature: 1.0
-    cut_punc: ""
+    cut_punc: ''
     speed: 1.0
     inp_refs: []
     sample_steps: 32
@@ -464,9 +464,9 @@ TTS:
     output_dir: tmp/
     group_id: 你的minimax平台groupID
     api_key: 你的minimax平台接口密钥
-    model: "speech-01-turbo"
+    model: 'speech-01-turbo'
     # 此处设置将优先于voice_setting中voice_id的设置；如都不设置，默认为 female-shaonv
-    voice_id: "female-shaonv"
+    voice_id: 'female-shaonv'
     # 以下可不用设置，使用默认设置
     # voice_setting:
     #     voice_id: "male-qn-qingse"
@@ -531,22 +531,22 @@ TTS:
     # 价格，$35/百万字符。火山原版¥450元/百万字符
     type: doubao
     api_url: https://api.302ai.cn/doubao/tts_hd
-    authorization: "Bearer "
+    authorization: 'Bearer '
     # 湾湾小何音色
-    voice: "zh_female_wanwanxiaohe_moon_bigtts"
+    voice: 'zh_female_wanwanxiaohe_moon_bigtts'
     output_dir: tmp/
-    access_token: "你的302API密钥"
+    access_token: '你的302API密钥'
   GizwitsTTS:
     type: doubao
     # 火山引擎作为基座，可以完全使用企业级火山引擎语音合成服务
     # 前一万名注册的用户，将送5元体验金额
     # 获取API Key地址：https://agentrouter.gizwitsapi.com/panel/token
     api_url: https://bytedance.gizwitsapi.com/api/v1/tts
-    authorization: "Bearer "
+    authorization: 'Bearer '
     # 湾湾小何音色
-    voice: "zh_female_wanwanxiaohe_moon_bigtts"
+    voice: 'zh_female_wanwanxiaohe_moon_bigtts'
     output_dir: tmp/
-    access_token: "你的机智云API key"
+    access_token: '你的机智云API key'
   ACGNTTS:
     #在线网址：https://acgn.ttson.cn/
     #token购买：www.ttson.cn
@@ -583,14 +583,16 @@ TTS:
     # 自定义的TTS接口服务，请求参数可自定义
     # 要求接口使用GET方式请求，并返回音频文件
     type: custom
-    url: "http://127.0.0.1:9880/tts"
-    params: # 自定义请求参数
+    url: 'http://127.0.0.1:9880/tts'
+    params:
+      # 自定义请求参数
       # text: "{prompt_text}" # {prompt_text}会被替换为实际的提示词内容
       # speaker: jok老师
       # speed: 1
       # foo: bar
       # testabc: 123456
-    headers: # 自定义请求头
+    headers:
+      # 自定义请求头
       # Authorization: Bearer xxxx
     format: wav # 接口返回的音频格式
     output_dir: tmp/

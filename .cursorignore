@@ -1,0 +1,7 @@
+.codemap
+.cursor
+.specstory
+.vscode
+models/*
+main/manager-api/*
+main/manager-web/*

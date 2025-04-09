@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小艾同学 - App 原型</title>
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome via CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+        integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        /* Custom scrollbar for chat area (optional, for aesthetics) */
+        .chat-area::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .chat-area::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            /* cool-gray-300 */
+            border-radius: 20px;
+        }
+
+        .chat-area::-webkit-scrollbar-track {
+            background-color: #f1f5f9;
+            /* cool-gray-100 */
+        }
+
+        /* Basic animation for voice button pulse */
+        .voice-active {
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+            }
+
+            /* blue-500 */
+            70% {
+                box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+            }
+        }
+
+        /* Ensure video/image placeholders have aspect ratio */
+        .media-placeholder {
+            aspect-ratio: 16 / 9;
+            object-fit: cover;
+        }
+
+        .preview-thumbnail {
+            position: relative;
+            width: 50px;
+            height: 50px;
+            overflow: hidden;
+            border-radius: 4px;
+            margin-right: 8px;
+        }
+
+        .preview-thumbnail img,
+        .preview-thumbnail video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .remove-preview {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background-color: rgba(0, 0, 0, 0.6);
+            color: white;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 flex justify-center items-start min-h-screen py-8">
+
+    <!-- iPhone Frame Simulation -->
+    <div class="w-full max-w-sm bg-white rounded-lg shadow-xl overflow-hidden border border-gray-300">
+
+        <!-- Screen: Main Chat -->
+        <div id="chat-screen" class="flex flex-col h-[750px]"> {/* Approximate iPhone height */}
+            <!-- Header -->
+            <header
+                class="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-3 flex justify-between items-center shadow-md sticky top-0 z-10">
+                <h1 class="text-lg font-semibold">小艾同学</h1>
+                <div class="flex items-center space-x-3">
+                    <button title="总结会话" class="hover:text-gray-200">
+                        <i class="fa-solid fa-list-check"></i>
+                    </button>
+                    <button title="新建会话" class="hover:text-gray-200">
+                        <i class="fa-solid fa-square-plus"></i>
+                    </button>
+                    <button id="settings-btn" title="设置" class="hover:text-gray-200">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chat Area -->
+            <main class="flex-1 overflow-y-auto p-4 space-y-4 chat-area bg-slate-50">
+                <!-- AI Message -->
+                <div class="flex items-start">
+                    <div
+                        class="flex-shrink-0 h-8 w-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-bold mr-2">
+                        <i class="fa-solid fa-robot fa-sm"></i>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg rounded-tl-none shadow max-w-xs">
+                        <p class="text-sm text-gray-800">你好！我是小艾同学，有什么可以帮你的吗？</p>
+                    </div>
+                </div>
+
+                <!-- User Message -->
+                <div class="flex justify-end items-start">
+                    <div class="bg-blue-500 text-white p-3 rounded-lg rounded-br-none shadow max-w-xs">
+                        <p class="text-sm">今天天气怎么样？适合出去玩吗？</p>
+                    </div>
+                    <div class="flex-shrink-0 h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center ml-2">
+                        <i class="fa-solid fa-user fa-sm text-gray-600"></i>
+                    </div>
+                </div>
+
+                <!-- AI Message with Image -->
+                <div class="flex items-start">
+                    <div
+                        class="flex-shrink-0 h-8 w-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-bold mr-2">
+                        <i class="fa-solid fa-robot fa-sm"></i>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg rounded-tl-none shadow max-w-xs space-y-2">
+                        <p class="text-sm text-gray-800">今天天气晴朗，25度，很适合出游。推荐去这个公园看看：</p>
+                        <img src="https://source.unsplash.com/random/300x200?park,sunny" alt="Park recommendation"
+                            class="rounded media-placeholder">
+                    </div>
+                </div>
+
+                <!-- User Message with Image & Video Preview (Example of sending) -->
+                <div class="flex justify-end items-start">
+                    <div class="bg-blue-500 text-white p-3 rounded-lg rounded-br-none shadow max-w-xs space-y-2">
+                        <p class="text-sm">太好了！我刚拍了些照片和视频，你看怎么样？</p>
+                        <img src="https://source.unsplash.com/random/300x200?flower" alt="User flower"
+                            class="rounded media-placeholder">
+                        <div class="bg-black rounded relative media-placeholder">
+                            <video class="w-full h-full object-cover rounded"
+                                poster="https://source.unsplash.com/random/300x200?cat">
+                                <!-- Video source would go here -->
+                            </video>
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <i class="fa-solid fa-play text-white text-4xl opacity-75"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex-shrink-0 h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center ml-2">
+                        <i class="fa-solid fa-user fa-sm text-gray-600"></i>
+                    </div>
+                </div>
+
+            </main>
+
+            <!-- Input Area -->
+            <footer class="p-3 bg-white border-t border-gray-200 sticky bottom-0">
+                <!-- Media Preview Area -->
+                <div id="media-preview-area" class="flex items-center mb-2 overflow-x-auto pb-2">
+                    <!-- Example Preview Item (Dynamically add these) -->
+                    <div class="preview-thumbnail">
+                        <img src="https://source.unsplash.com/random/50x50?nature" alt="Preview">
+                        <span class="remove-preview" title="移除"><i class="fa-solid fa-times fa-xs"></i></span>
+                    </div>
+                    <div class="preview-thumbnail bg-black">
+                        <video class="w-full h-full object-cover"
+                            poster="https://source.unsplash.com/random/50x50?city"> </video>
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <i class="fa-solid fa-play text-white text-lg opacity-75"></i>
+                        </div>
+                        <span class="remove-preview" title="移除"><i class="fa-solid fa-times fa-xs"></i></span>
+                    </div>
+                    <!-- Add more preview items here -->
+                </div>
+
+                <!-- Input Controls -->
+                <div class="flex items-center space-x-2">
+                    <input type="text" placeholder="输入文字..."
+                        class="flex-1 border border-gray-300 rounded-full py-2 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+
+                    <button title="拍照或选择图片" class="text-gray-500 hover:text-blue-500">
+                        <i class="fa-solid fa-camera fa-lg"></i>
+                    </button>
+                    <button title="录像或选择视频" class="text-gray-500 hover:text-blue-500">
+                        <i class="fa-solid fa-video fa-lg"></i>
+                    </button>
+
+                    <button id="voice-btn" title="按住说话"
+                        class="bg-blue-500 text-white rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 hover:bg-blue-600 active:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1">
+                        <i class="fa-solid fa-microphone"></i>
+                    </button>
+                    <!-- Or a Send button when text/media is present -->
+                    <!--
+                     <button title="发送" class="bg-blue-500 text-white rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 hover:bg-blue-600 focus:outline-none">
+                        <i class="fa-solid fa-paper-plane"></i>
+                    </button>
+                    -->
+                </div>
+            </footer>
+        </div>
+
+        <!-- Screen: Settings (Initially Hidden) -->
+        <div id="settings-screen" class="hidden flex-col h-[750px]">
+            <!-- Header -->
+            <header
+                class="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-3 flex justify-between items-center shadow-md sticky top-0 z-10">
+                <button id="back-to-chat-btn" class="hover:text-gray-200">
+                    <i class="fa-solid fa-chevron-left mr-2"></i>返回
+                </button>
+                <h1 class="text-lg font-semibold">设置</h1>
+                <div class="w-16"></div> {/* Placeholder for balance */}
+            </header>
+
+            <!-- Settings Form -->
+            <main class="flex-1 p-6 space-y-6 bg-slate-50 overflow-y-auto">
+                <div class="space-y-2">
+                    <label for="server-url" class="block text-sm font-medium text-gray-700">服务器地址</label>
+                    <input type="text" id="server-url" placeholder="例如: ws://192.168.1.100:8080"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                    <p class="text-xs text-gray-500">请输入 WebSocket 服务器的完整地址。</p>
+                </div>
+
+                <div class="space-y-2">
+                    <label for="llm-model" class="block text-sm font-medium text-gray-700">LLM 模型配置</label>
+                    <select id="llm-model"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                        <option>默认模型 (服务器指定)</option>
+                        <option>模型 A (gpt-4)</option>
+                        <option>模型 B (claude-3)</option>
+                        <option>自定义</option>
+                    </select>
+                    {/* Add more fields for custom LLM params if needed */}
+                </div>
+
+                <div class="space-y-2">
+                    <label for="tts-voice" class="block text-sm font-medium text-gray-700">TTS 语音选择</label>
+                    <select id="tts-voice"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                        <option>默认语音</option>
+                        <option>甜美女声</option>
+                        <option>磁性男声</option>
+                    </select>
+                </div>
+
+                <div class="border-t border-gray-200 pt-6">
+                    <button type="button"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        保存设置
+                    </button>
+                </div>
+            </main>
+        </div>
+
+    </div>
+
+    <script>
+        // Basic screen switching logic for prototype
+        const chatScreen = document.getElementById('chat-screen');
+        const settingsScreen = document.getElementById('settings-screen');
+        const settingsBtn = document.getElementById('settings-btn');
+        const backToChatBtn = document.getElementById('back-to-chat-btn');
+        const voiceBtn = document.getElementById('voice-btn');
+
+        settingsBtn.addEventListener('click', () => {
+            chatScreen.classList.add('hidden');
+            settingsScreen.classList.remove('hidden');
+            settingsScreen.classList.add('flex'); // Make sure display:flex is applied
+        });
+
+        backToChatBtn.addEventListener('click', () => {
+            settingsScreen.classList.add('hidden');
+            settingsScreen.classList.remove('flex');
+            chatScreen.classList.remove('hidden');
+        });
+
+        // Simulate voice button active state
+        voiceBtn.addEventListener('mousedown', () => voiceBtn.classList.add('voice-active'));
+        voiceBtn.addEventListener('mouseup', () => voiceBtn.classList.remove('voice-active'));
+        voiceBtn.addEventListener('mouseleave', () => voiceBtn.classList.remove('voice-active')); // If mouse leaves while pressed
+        voiceBtn.addEventListener('touchstart', (e) => { e.preventDefault(); voiceBtn.classList.add('voice-active'); }); // Prevent default for potential scroll/zoom on mobile
+        voiceBtn.addEventListener('touchend', () => voiceBtn.classList.remove('voice-active'));
+
+
+        // Simulate removing preview items
+        const previewArea = document.getElementById('media-preview-area');
+        previewArea.addEventListener('click', (event) => {
+            if (event.target.closest('.remove-preview')) {
+                event.target.closest('.preview-thumbnail').remove();
+                // Add logic here to update actual file list if needed
+            }
+        });
+
+        // Add more JS for:
+        // - Adding preview thumbnails when camera/video buttons are clicked (simulated)
+        // - Switching send button visibility based on input/media
+        // - Clearing input after send
+        // - Simulating message sending and receiving
+    </script>
+
+</body>
+
+</html>
