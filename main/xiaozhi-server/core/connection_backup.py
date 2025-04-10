@@ -5,10 +5,10 @@ import time
 import queue
 import asyncio
 import traceback
-from typing import Dict, Any, Optional, Tuple, List
 
 import threading
 import websockets
+from typing import Dict, Any
 from plugins_func.loadplugins import auto_import_modules
 from config.logger import setup_logging
 from core.utils.dialogue import Message, Dialogue
@@ -19,7 +19,7 @@ from core.utils.util import (
     get_ip_info,
 )
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from core.handle.sendAudioHandler import sendAudioMessage, send_stt_message
+from core.handle.sendAudioHandler import sendAudioMessage
 from core.handle.receiveAudioHandler import handleAudioMessage
 from core.handle.functionHandler import FunctionHandler
 from plugins_func.register import Action, ActionResponse
@@ -61,7 +61,7 @@ class ConnectionHandler:
         self.loop = asyncio.get_event_loop()
         self.stop_event = threading.Event()
         self.tts_queue = queue.Queue()
-        self.audio_play_queue = queue.PriorityQueue()
+        self.audio_play_queue = queue.Queue()
         self.executor = ThreadPoolExecutor(max_workers=10)
 
         # 依赖的组件
@@ -301,93 +301,92 @@ class ConnectionHandler:
             return False
         return not self.is_device_verified
 
-    async def chat(self, text):
-        """处理纯文本聊天（优化版，实现并发 TTS 和即时播放）"""
-        if not self.llm:
-            self.logger.bind(tag=TAG).error("LLM instance not available.")
-            return
-
-        await send_stt_message(self, text) # 使用 self 实例
-        self.llm_finish_task = False
-        # 注意：重置索引逻辑可能需要根据实际需求调整
-        # self.recode_first_last_text("", 0)
-
-        self.dialogue.put(Message(role="user", content=text))
-
-        tts_tasks = []
-        current_text_index = self.tts_last_text_index # 获取当前的最后一个索引
-        llm_response_buffer = ""
-
-        try:
-            # 使用 LLM 流式响应
-            async for chunk in self.llm.response_stream(self.dialogue.get_context()):
-                if chunk:
-                    llm_response_buffer += chunk
-                    # 这里可以实现更智能的分块逻辑，例如按标点符号分割
-                    # 简化处理：如果遇到句号、问号、感叹号，就认为是一个完整的块
-                    if chunk.endswith(('.', '。', '!', '！', '?', '？')):
-                        text_to_speak = llm_response_buffer.strip()
-                        if text_to_speak:
-                            current_text_index += 1
-                            self.logger.bind(tag=TAG).debug(f"Creating TTS task for index {current_text_index}: '{text_to_speak[:20]}...'")
-                            # 创建异步 TTS 任务
-                            task = asyncio.create_task(
-                                self.speak_and_play_async(text_to_speak, current_text_index)
-                            )
-                            tts_tasks.append(task)
-                            self.recode_first_last_text(text_to_speak, current_text_index) # 更新最后的索引记录
-                        llm_response_buffer = "" # 清空缓冲区
-
-            # 处理可能剩余在缓冲区中的最后一部分文本
-            final_text_chunk = llm_response_buffer.strip()
-            if final_text_chunk:
-                current_text_index += 1
-                self.logger.bind(tag=TAG).debug(f"Creating TTS task for final index {current_text_index}: '{final_text_chunk[:20]}...'")
-                task = asyncio.create_task(
-                    self.speak_and_play_async(final_text_chunk, current_text_index)
-                )
-                tts_tasks.append(task)
-                self.recode_first_last_text(final_text_chunk, current_text_index)
-
-
-            # --- 核心优化：使用 asyncio.as_completed 处理完成的任务 ---
-            if tts_tasks:
-                full_assistant_response = "" # 用于记录完整的助手回复
-                async for completed_task in asyncio.as_completed(tts_tasks):
-                    try:
-                        result = await completed_task
-                        if result:
-                            opus_packets, response_text, text_index = result
-                            full_assistant_response += response_text # 拼接完整回复
-                            # *** 立即将完成的结果放入播放队列 ***
-                            # 使用 text_index 作为优先级，确保顺序播放
-                            self.audio_play_queue.put((text_index, (opus_packets, response_text, text_index)))
-                            self.logger.bind(tag=TAG).info(f"Put Opus packets for index {text_index} into play queue.")
-                        else:
-                            # 处理 TTS 失败的情况，可以记录日志或跳过
-                            self.logger.bind(tag=TAG).warning(f"TTS task completed but returned no result (likely failed).")
-                    except Exception as e:
-                         # 处理任务执行中的异常
-                         self.logger.bind(tag=TAG).error(f"Error processing completed TTS task: {e}", exc_info=True)
-
-                # 所有 TTS 任务处理完毕后，记录完整的助手回复
-                if full_assistant_response:
-                     self.dialogue.put(Message(role="assistant", content=full_assistant_response))
-                else:
-                     self.logger.bind(tag=TAG).warning("LLM streamed response but no TTS results were successfully processed.")
-
-            else:
-                self.logger.bind(tag=TAG).warning("LLM returned empty stream or no processable text chunks.")
-
+    def chat(self, query):
+        if self.isNeedAuth():
             self.llm_finish_task = True
+            future = asyncio.run_coroutine_threadsafe(
+                self._check_and_broadcast_auth_code(), self.loop
+            )
+            future.result()
+            return True
 
+        self.dialogue.put(Message(role="user", content=query))
+
+        response_message = []
+        processed_chars = 0  # 跟踪已处理的字符位置
+        try:
+            start_time = time.time()
+            # 使用带记忆的对话
+            future = asyncio.run_coroutine_threadsafe(
+                self.memory.query_memory(query), self.loop
+            )
+            memory_str = future.result()
+
+            self.logger.bind(tag=TAG).debug(f"记忆内容: {memory_str}")
+            llm_responses = self.llm.response(
+                self.session_id, self.dialogue.get_llm_dialogue_with_memory(memory_str)
+            )
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"Error during LLM chat or TTS processing: {e}", exc_info=True)
-            self.llm_finish_task = True # 确保即使出错也标记完成
-            # 出错时可能需要取消未完成的 TTS 任务
-            for task in tts_tasks:
-                if not task.done():
-                    task.cancel()
+            self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+            return None
+
+        self.llm_finish_task = False
+        text_index = 0
+        for content in llm_responses:
+            response_message.append(content)
+            if self.client_abort:
+                break
+
+            end_time = time.time()
+            # self.logger.bind(tag=TAG).debug(f"大模型返回时间: {end_time - start_time} 秒, 生成token={content}")
+
+            # 合并当前全部文本并处理未分割部分
+            full_text = "".join(response_message)
+            current_text = full_text[processed_chars:]  # 从未处理的位置开始
+
+            # 查找最后一个有效标点
+            punctuations = ("。", "？", "！", "；", "：")
+            last_punct_pos = -1
+            for punct in punctuations:
+                pos = current_text.rfind(punct)
+                if pos > last_punct_pos:
+                    last_punct_pos = pos
+
+            # 找到分割点则处理
+            if last_punct_pos != -1:
+                segment_text_raw = current_text[: last_punct_pos + 1]
+                segment_text = get_string_no_punctuation_or_emoji(segment_text_raw)
+                if segment_text:
+                    # 强制设置空字符，测试TTS出错返回语音的健壮性
+                    # if text_index % 2 == 0:
+                    #     segment_text = " "
+                    text_index += 1
+                    self.recode_first_last_text(segment_text, text_index)
+                    future = self.executor.submit(
+                        self.speak_and_play, segment_text, text_index
+                    )
+                    self.tts_queue.put(future)
+                    processed_chars += len(segment_text_raw)  # 更新已处理字符位置
+
+        # 处理最后剩余的文本
+        full_text = "".join(response_message)
+        remaining_text = full_text[processed_chars:]
+        if remaining_text:
+            segment_text = get_string_no_punctuation_or_emoji(remaining_text)
+            if segment_text:
+                text_index += 1
+                self.recode_first_last_text(segment_text, text_index)
+                future = self.executor.submit(
+                    self.speak_and_play, segment_text, text_index
+                )
+                self.tts_queue.put(future)
+
+        self.llm_finish_task = True
+        self.dialogue.put(Message(role="assistant", content="".join(response_message)))
+        self.logger.bind(tag=TAG).debug(
+            json.dumps(self.dialogue.get_llm_dialogue(), indent=4, ensure_ascii=False)
+        )
+        return True
 
     def chat_with_function_calling(self, query, tool_call=False):
         self.logger.bind(tag=TAG).debug(f"Chat with function calling start: {query}")
@@ -748,42 +747,6 @@ class ConnectionHandler:
                 self.logger.bind(tag=TAG).error(
                     f"audio_play_priority priority_thread: {text} {e}"
                 )
-
-    async def speak_and_play_async(self, text: str, text_index: int) -> Optional[Tuple[List[bytes], str, int]]:
-        """(修改后) 异步进行 TTS 转换并返回 Opus 包、文本、索引"""
-        try:
-            if not self.tts:
-                 self.logger.bind(tag=TAG).error("TTS instance is not available.")
-                 return None
-            start_time = time.time()
-
-            # 使用 asyncio.to_thread 在线程中运行阻塞的 TTS 和 Opus 转换
-            def _blocking_tts_and_opus():
-                audio_file = self.tts.to_tts(text)
-                if audio_file and os.path.exists(audio_file) and os.path.getsize(audio_file) > 0:
-                    opus_packets, duration = self.tts.audio_to_opus_data(audio_file)
-                    return opus_packets, duration
-                else:
-                    self.logger.bind(tag=TAG).warning(f"TTS failed to generate audio or generated empty file for text chunk index {text_index}")
-                    return None, 0
-
-            result = await asyncio.to_thread(_blocking_tts_and_opus)
-
-            if result is None:
-                return None
-
-            opus_packets, duration = result
-            if opus_packets:
-                end_time = time.time()
-                self.logger.bind(tag=TAG).info(f"TTS+Opus generated in {end_time - start_time:.3f}s, audio duration: {duration:.2f}s for index {text_index}")
-                # 返回 Opus 包, 原始文本, 索引
-                return opus_packets, text, text_index
-            else:
-                return None # TTS 或 Opus 转换失败
-
-        except Exception as e:
-            self.logger.bind(tag=TAG).error(f"Error during async TTS processing for index {text_index}: {e}", exc_info=True)
-            return None
 
     def speak_and_play(self, text, text_index=0):
         if text is None or len(text) <= 0:
