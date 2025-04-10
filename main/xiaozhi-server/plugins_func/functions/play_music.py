@@ -8,7 +8,7 @@ import difflib
 import traceback
 from pathlib import Path
 from core.utils import p3
-from core.handle.sendAudioHandle import send_stt_message
+from core.handle.sendAudioHandler import send_stt_message
 from plugins_func.register import register_function,ToolType, ActionResponse, Action
 
 

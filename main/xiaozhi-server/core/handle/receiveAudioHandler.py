@@ -1,7 +1,7 @@
 from config.logger import setup_logging
 import time
 from core.utils.util import remove_punctuation_and_length
-from core.handle.sendAudioHandle import send_stt_message
+from core.handle.sendAudioHandler import send_stt_message
 from core.handle.intentHandler import handle_user_intent
 
 TAG = __name__

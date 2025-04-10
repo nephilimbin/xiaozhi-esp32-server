@@ -25,9 +25,9 @@ server:
     #  - "24:0A:C4:1D:3B:F0"  # MAC地址列表
 log:
   # 设置控制台输出的日志格式，时间、日志级别、标签、消息
-  log_format: '<green>{time:YYMMDD HH:mm:ss}</green>[{version}_{selected_module}][<light-blue>{extra[tag]}</light-blue>]-<level>{level}</level>-<light-green>{message}</light-green>'
-  # 设置日志文件输出的格式，时间、日志级别、标签、消息
-  log_format_file: '{time:YYYY-MM-DD HH:mm:ss} - {version}_{selected_module} - {name} - {level} - {extra[tag]} - {message}'
+  log_format: '<green>{time:YYMMDD HH:mm:ss.SSS}</green>[{version}_{selected_module}][<light-blue>{extra[tag]}</light-blue>]-<level>{level}</level>-<light-green>{message}</light-green>'
+  # 设置日志文件输出的格式，时间、日志级别、标签、消息、
+  log_format_file: '{time:YYYY-MM-DD HH:mm:ss.SSS} - {version}_{selected_module} - {name} - {level} - {extra[tag]} - {message}'
   # 设置日志等级：INFO、DEBUG
   log_level: INFO
   # 设置日志路径
@@ -169,7 +169,7 @@ Intent:
     # 不需要动type
     type: function_call
     # plugins_func/functions下的模块，可以通过配置，选择加载哪个模块，加载后对话支持相应的function调用
-    # 系统默认已经记载“handle_exit_intent(退出识别)”、“play_music(音乐播放)”插件，请勿重复加载
+    # 系统默认已经记载"handle_exit_intent(退出识别)"、"play_music(音乐播放)"插件，请勿重复加载
     # 下面是加载查天气、角色切换、加载查新闻的插件示例
     functions:
       - change_role

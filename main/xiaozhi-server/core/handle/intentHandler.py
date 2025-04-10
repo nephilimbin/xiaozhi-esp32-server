@@ -1,11 +1,10 @@
 from config.logger import setup_logging
 import json
 import uuid
-from core.handle.sendAudioHandle import send_stt_message
-from core.handle.helloHandle import checkWakeupWords
+from core.handle.sendAudioHandler import send_stt_message
+from core.handle.helloHandler import checkWakeupWords
 from core.utils.util import remove_punctuation_and_length
 from core.utils.dialogue import Message
-from loguru import logger
 
 TAG = __name__
 logger = setup_logging()

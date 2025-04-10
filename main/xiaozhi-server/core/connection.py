@@ -12,15 +12,15 @@ from typing import Dict, Any
 from plugins_func.loadplugins import auto_import_modules
 from config.logger import setup_logging
 from core.utils.dialogue import Message, Dialogue
-from core.handle.textHandle import handleTextMessage
+from core.handle.textHandler import handleTextMessage
 from core.utils.util import (
     get_string_no_punctuation_or_emoji,
     extract_json_from_string,
     get_ip_info,
 )
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from core.handle.sendAudioHandle import sendAudioMessage
-from core.handle.receiveAudioHandle import handleAudioMessage
+from core.handle.sendAudioHandler import sendAudioMessage
+from core.handle.receiveAudioHandler import handleAudioMessage
 from core.handle.functionHandler import FunctionHandler
 from plugins_func.register import Action, ActionResponse
 from config.private_config import PrivateConfig

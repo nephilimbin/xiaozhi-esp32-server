@@ -1,11 +1,11 @@
 from config.logger import setup_logging
 import json
-from core.handle.abortHandle import handleAbortMessage
-from core.handle.helloHandle import handleHelloMessage
+from core.handle.abortHandler import handleAbortMessage
+from core.handle.helloHandler import handleHelloMessage
 from core.utils.util import remove_punctuation_and_length
-from core.handle.receiveAudioHandle import startToChat, handleAudioMessage
-from core.handle.sendAudioHandle import send_stt_message, send_tts_message
-from core.handle.iotHandle import handleIotDescriptors, handleIotStatus
+from core.handle.receiveAudioHandler import startToChat, handleAudioMessage
+from core.handle.sendAudioHandler import send_stt_message, send_tts_message
+from core.handle.iotHandler import handleIotDescriptors, handleIotStatus
 import asyncio
 
 TAG = __name__

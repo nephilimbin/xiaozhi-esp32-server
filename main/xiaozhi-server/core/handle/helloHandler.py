@@ -1,6 +1,6 @@
 import json
 from config.logger import setup_logging
-from core.handle.sendAudioHandle import send_stt_message
+from core.handle.sendAudioHandler import send_stt_message
 from core.utils.util import remove_punctuation_and_length
 import shutil
 import asyncio

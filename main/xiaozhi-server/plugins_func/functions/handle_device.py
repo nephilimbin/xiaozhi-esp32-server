@@ -1,6 +1,6 @@
 from config.logger import setup_logging
 from plugins_func.register import register_function, ToolType, ActionResponse, Action
-from core.handle.iotHandle import get_iot_status, send_iot_conn
+from core.handle.iotHandler import get_iot_status, send_iot_conn
 import asyncio
 
 TAG = __name__
