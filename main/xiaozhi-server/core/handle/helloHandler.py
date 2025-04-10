@@ -1,5 +1,6 @@
 import json
 from config.logger import setup_logging
+from ..channels.interface import ICommunicationChannel
 from core.handle.sendAudioHandler import send_stt_message
 from core.utils.util import remove_punctuation_and_length
 import shutil
@@ -20,8 +21,8 @@ WAKEUP_CONFIG = {
 }
 
 
-async def handleHelloMessage(conn):
-    await conn.websocket.send(json.dumps(conn.welcome_msg))
+async def handleHelloMessage(conn, channel: ICommunicationChannel):
+    await channel.send_json(conn.welcome_msg)
 
 
 async def checkWakeupWords(conn, text):

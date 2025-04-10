@@ -7,23 +7,26 @@ from core.handle.receiveAudioHandler import startToChat, handleAudioMessage
 from core.handle.sendAudioHandler import send_stt_message, send_tts_message
 from core.handle.iotHandler import handleIotDescriptors, handleIotStatus
 import asyncio
+# Import the interface from the new location
+from ..channels.interface import ICommunicationChannel
 
 TAG = __name__
 logger = setup_logging()
 
 
-async def handleTextMessage(conn, message):
+async def handleTextMessage(conn, message, channel: ICommunicationChannel):
     """处理文本消息"""
     logger.bind(tag=TAG).info(f"收到文本消息：{message}")
     try:
         msg_json = json.loads(message)
         if isinstance(msg_json, int):
-            await conn.websocket.send(message)
+            logger.bind(tag=TAG).debug(f"Received integer, sending raw string: {message}")
+            await channel.send_raw_string(message)
             return
         if msg_json["type"] == "hello":
-            await handleHelloMessage(conn)
+            await handleHelloMessage(conn, channel)
         elif msg_json["type"] == "abort":
-            await handleAbortMessage(conn)
+            await handleAbortMessage(conn, channel)
         elif msg_json["type"] == "listen":
             if "mode" in msg_json:
                 conn.client_listen_mode = msg_json["mode"]
@@ -62,4 +65,5 @@ async def handleTextMessage(conn, message):
             if "states" in msg_json:
                 asyncio.create_task(handleIotStatus(conn, msg_json["states"]))
     except json.JSONDecodeError:
-        await conn.websocket.send(message)
+        logger.bind(tag=TAG).warning(f"Received non-JSON message, sending raw string: {message}")
+        await channel.send_raw_string(message)

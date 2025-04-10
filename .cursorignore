@@ -2,6 +2,24 @@
 .cursor
 .specstory
 .vscode
-models/*
+
+# python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
+# env
+.env
+.venv
+
+# logs
+logs/*
+
+# project
+main/xiaozhi-server/models/*
 main/manager-api/*
 main/manager-web/*
+

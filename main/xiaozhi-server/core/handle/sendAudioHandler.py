@@ -44,6 +44,7 @@ async def sendAudio(conn, audios):
     # 正常播放剩余帧
     for opus_packet in audios[pre_buffer:]:
         if conn.client_abort:
+            logger.bind(tag=TAG).info("Client aborted during audio send.")
             return
 
         # 计算预期发送时间
@@ -66,7 +67,6 @@ async def send_tts_message(conn, state, text=None):
 
     # TTS播放结束
     if state == "stop":
-        # 播放提示音
         tts_notify = conn.config.get("enable_stop_tts_notify", False)
         if tts_notify:
             stop_tts_notify_voice = conn.config.get(
@@ -74,10 +74,9 @@ async def send_tts_message(conn, state, text=None):
             )
             audios, duration = conn.tts.audio_to_opus_data(stop_tts_notify_voice)
             await sendAudio(conn, audios)
-        # 清除服务端讲话状态
         conn.clearSpeakStatus()
 
-    # 发送消息到客户端
+    # Use channel to send the message
     await conn.websocket.send(json.dumps(message))
 
 
