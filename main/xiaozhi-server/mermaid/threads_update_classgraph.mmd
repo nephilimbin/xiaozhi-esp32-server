@@ -1,0 +1,111 @@
+classDiagram
+    direction LR
+
+    class WebSocketServer {
+        +start()
+        +handle_new_connection(websocket)
+    }
+
+    class ConnectionManager {
+        -websocket: WebSocketWrapper
+        -authenticator: Authenticator
+        -router: MessageRouter
+        -dispatcher: TaskDispatcher
+        -state_manager: StateManager
+        +manage_connection() void
+        -receive_messages() void
+    }
+
+    class WebSocketWrapper {
+        -ws: WebSocketConnection
+        +send_json(data: dict) void
+        +send_text(text: str) void
+        +receive() Any
+        +close() void
+    }
+
+    class Authenticator {
+        +authenticate(headers: dict) bool
+    }
+
+    class MessageRouter {
+        +route(message: Any) BaseMessageHandler
+    }
+
+    class BaseMessageHandler {
+        <<Interface>>
+        +handle(message: Any, context: HandlerContext) void
+    }
+
+    class TextMessageHandler {
+        +handle(message: Any, context: HandlerContext) void
+    }
+
+    class AudioMessageHandler {
+        +handle(message: Any, context: HandlerContext) void
+    }
+    %% Potentially other handlers like ControlMessageHandler
+
+    class HandlerContext {
+        %% Object passed to handlers containing dependencies
+        +dispatcher: TaskDispatcher
+        +websocket: WebSocketWrapper
+        +state_manager: StateManager
+        %% ... other needed context ...
+    }
+
+    class TaskDispatcher {
+        -executor: ThreadPoolExecutor
+        -tts_queue: Queue
+        -audio_queue: Queue
+        -loop: AbstractEventLoop
+        +dispatch_plugin_task(func, *args) Future
+        +dispatch_tts(text: str) void
+        +dispatch_audio(audio_data: Any) void
+    }
+
+    class StateManager {
+        +load(connection_id: str) State
+        +save(connection_id: str, state: State) void
+    }
+
+    class TTSThread {
+        -tts_queue: Queue
+        -loop: AbstractEventLoop
+        +run() void
+        -process_tts_task(text) void
+    }
+
+    class AudioPlaybackThread {
+        -audio_queue: Queue
+        -loop: AbstractEventLoop
+        +run() void
+        -process_audio_task(audio_data) void
+    }
+
+    WebSocketServer --> ConnectionManager : creates
+    ConnectionManager o-- WebSocketWrapper : uses
+    ConnectionManager o-- Authenticator : uses
+    ConnectionManager o-- MessageRouter : uses
+    ConnectionManager o-- TaskDispatcher : uses (via context)
+    ConnectionManager o-- StateManager : uses
+
+    ConnectionManager ..> BaseMessageHandler : receives from Router
+    MessageRouter ..> BaseMessageHandler : returns
+
+    BaseMessageHandler <|-- TextMessageHandler : implements
+    BaseMessageHandler <|-- AudioMessageHandler : implements
+
+    TextMessageHandler ..> HandlerContext : uses
+    AudioMessageHandler ..> HandlerContext : uses
+    TextMessageHandler ..> TaskDispatcher : uses (via context)
+    AudioMessageHandler ..> TaskDispatcher : uses (via context)
+
+    TaskDispatcher ..> TTSThread : puts on queue
+    TaskDispatcher ..> AudioPlaybackThread : puts on queue
+    TaskDispatcher ..> ThreadPoolExecutor : submits task
+
+    %% Conceptual representation of async interaction
+    TTSThread ..> asyncio : run_coroutine_threadsafe
+    AudioPlaybackThread ..> asyncio : run_coroutine_threadsafe
+    ThreadPoolExecutor ..> asyncio : run_coroutine_threadsafe

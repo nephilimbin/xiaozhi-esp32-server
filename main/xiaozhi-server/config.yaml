@@ -42,7 +42,7 @@ delete_audio: true
 # 没有语音输入多久后断开连接(秒)，默认2分钟，即120秒
 close_connection_no_voice_time: 120
 # TTS请求超时时间(秒)
-tts_timeout: 10
+tts_timeout: 20
 # 开启唤醒词加速
 enable_wakeup_words_response_cache: true
 # 开场是否回复唤醒词
