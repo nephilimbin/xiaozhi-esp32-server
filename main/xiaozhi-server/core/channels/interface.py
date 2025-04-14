@@ -23,18 +23,17 @@ class ICommunicationChannel(ABC):
         """
         pass
 
-    # Add other necessary communication methods here as needed, e.g.:
     # @abstractmethod
-    # async def broadcast(self, message: dict[str, Any]) -> None:
+    # async def receive(self) -> Any:
+    #     """Receives a message from the channel."""
     #     pass
-    #
+
     # @abstractmethod
     # async def close(self) -> None:
+    #     """Closes the communication channel."""
     #     pass
-    #
-    # @abstractmethod
-    # def is_active(self) -> bool:
-    #     pass
+
+
 
     # Helper methods can remain here or be moved if they don't rely on abstract state
     # Or they can be implemented by concrete classes if preferred
