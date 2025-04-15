@@ -7,25 +7,28 @@ classDiagram
     }
 
     class ConnectionManager {
-        -websocket: WebSocketWrapper
-        -authenticator: Authenticator
+        -channel: WebSocketChannel %% Changed from websocket: WebSocketWrapper
+        -auth_middleware: AuthMiddleware %% Changed from authenticator: Authenticator
         -router: MessageRouter
         -dispatcher: TaskDispatcher
         -state_manager: StateManager
         +manage_connection() void
-        -receive_messages() void
+        -receive_messages() void %% This might live here conceptually before step 8
     }
 
-    class WebSocketWrapper {
+    class WebSocketChannel { %% Renamed from WebSocketWrapper
         -ws: WebSocketConnection
         +send_json(data: dict) void
         +send_text(text: str) void
-        +receive() Any
-        +close() void
+        +send_message(message: dict) void %% Added based on your code
+        +send_raw_string(text: str) void %% Added based on your code
+        +receive() Any %% Added per discussion, might not be fully used until Step 8
+        +close() void %% Added per discussion, might not be fully used until Step 8
     }
 
-    class Authenticator {
+    class AuthMiddleware { %% Renamed from Authenticator
         +authenticate(headers: dict) bool
+        +get_token_name(token: str) str %% Added based on your code
     }
 
     class MessageRouter {
@@ -49,7 +52,7 @@ classDiagram
     class HandlerContext {
         %% Object passed to handlers containing dependencies
         +dispatcher: TaskDispatcher
-        +websocket: WebSocketWrapper
+        +channel: WebSocketChannel %% Changed from websocket: WebSocketWrapper
         +state_manager: StateManager
         %% ... other needed context ...
     }
@@ -65,8 +68,8 @@ classDiagram
     }
 
     class StateManager {
-        +load(connection_id: str) State
-        +save(connection_id: str, state: State) void
+        +load(connection_id: str) State %% Define State type if possible
+        +save(connection_id: str, state: State) void %% Define State type if possible
     }
 
     class TTSThread {
@@ -84,8 +87,8 @@ classDiagram
     }
 
     WebSocketServer --> ConnectionManager : creates
-    ConnectionManager o-- WebSocketWrapper : uses
-    ConnectionManager o-- Authenticator : uses
+    ConnectionManager o-- WebSocketChannel : uses %% Changed
+    ConnectionManager o-- AuthMiddleware : uses %% Changed
     ConnectionManager o-- MessageRouter : uses
     ConnectionManager o-- TaskDispatcher : uses (via context)
     ConnectionManager o-- StateManager : uses

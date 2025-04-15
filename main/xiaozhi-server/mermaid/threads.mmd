@@ -1,82 +1,96 @@
 graph TD
-    %% --- Main Application Entry Point ---
-    subgraph MainApplication ["Main Application (app.py)"]
+    %% --- Server Entry & Connection Setup ---
+    subgraph ServerCore ["Server Core (app.py, core/server.py)"]
         direction LR
-        A["启动 main()"] --> B(创建 asyncio 事件循环);
-        B --> C{启动 WebSocket 服务器任务};
-        B --> D{监听退出信号};
-        C --> E[等待连接];
-        D --> F(清理任务);
-        F --> G(停止循环);
+        A["启动 main()"] --> B(创建主事件循环);
+        B --> C{启动 WebSocket Server};
+        C --> D[监听端口, 等待连接];
     end
 
-    %% --- Handling Individual Connections ---
-    subgraph ConnectionHandler ["Connection Handler (core/connection.py per connection)"]
+    %% --- Single Connection Lifecycle Management ---
+    subgraph ConnectionManager ["Connection Manager (core/connection/manager.py per connection)"]
         direction TB
-        E --> H{接受 WebSocket 连接};
-        H --> I{"认证 Authenticate (core/auth.py - async)"};
-        I --> J(发送欢迎消息);
-        J --> K(加载私有配置);
-        K --> L{启动 TTS 优先级线程};
-        K --> M{启动音频播放优先级线程};
-        L --> L_Thread
-        M --> M_Thread
-        K --> N(进入消息监听循环 async for);
-        N -- 文本消息 --> O{"路由消息 _route_message (async)"};
-        N -- 音频消息 --> O;
-        O --> P["处理文本 handleTextMessage (async)"];
-        O --> Q["处理音频 handleAudioMessage (async)"];
-        P --> R{"调用插件/功能 (可能在 Executor 中运行)"};
-        Q --> R;
-        R --> S{执行阻塞/IO 操作};
-        N -- 连接关闭 --> T{"保存状态并关闭 (async)"};
-        T --> U(关闭连接);
+        D --> E{接受 WebSocket 连接};
+        E --> F[创建 WebSocketChannel];
+        F --> G["注入依赖: AuthMiddleware, Router, Dispatcher, StateManager"];
+        G --> H{"调用 AuthMiddleware.authenticate()"};
+        H -- "认证成功" --> I("加载状态 StateManager.load()");
+        I --> J(进入消息监听循环 async for);
+        J -- "收到消息" --> K{"调用 Router.route(message)"};
+        K -- "返回 Handler" --> L{"调用 Handler.handle(message, context)"};
+        L -- "正常处理" --> J;
+        J -- "连接关闭/异常" --> M{"保存状态 StateManager.save()"};
+        M --> N("关闭连接 channel.close()");
+        H -- "认证失败" --> N;
     end
 
-    %% --- Threading and Asynchronous Task Execution ---
-    subgraph ThreadingAsyncExecution ["Threading & Async Execution (core/connection.py, concurrent.futures)"]
+    %% --- Authentication ---
+    subgraph AuthMiddlewareComponent ["Authentication (core/auth.py - AuthMiddleware)"]
+        AuthNode["authenticate(headers)"]
+    end
+
+    %% --- Message Routing ---
+    subgraph Router ["Message Router (core/routing.py)"]
+        RouteNode["route(message) -> MessageHandler"]
+    end
+
+    %% --- Message Handling ---
+    subgraph Handlers ["Message Handlers (core/message_handlers/*)"]
         direction LR
-        Executor[ThreadPoolExecutor]
-        L_Thread -- 添加任务 --> TTS_Queue[(TTS Queue)]
-        M_Thread -- 添加任务 --> Audio_Queue[(Audio Playback Queue)]
-
-        subgraph TTSThread ["TTS Thread (threading.Thread in core/connection.py)"]
-             direction TB
-             TTS_Queue -- 获取任务 --> TTS_Process["处理 TTS (core/providers/tts/* - async/sync)"];
-             TTS_Process -- 需要主循环操作 --> RunTTSAsync(run_coroutine_threadsafe);
-        end
-
-        subgraph AudioPlaybackThread ["Audio Playback Thread (threading.Thread in core/connection.py)"]
-             direction TB
-             Audio_Queue -- 获取任务 --> Audio_Process(处理音频播放);
-             Audio_Process -- 需要主循环操作 --> RunAudioAsync(run_coroutine_threadsafe);
-        end
-
-        R -- 运行阻塞代码 --> Executor
-        Executor -- 完成 --> RunExecAsync(run_coroutine_threadsafe);
+        HandlerBase["BaseMessageHandler.handle()"];
+        TextHandler["TextMessageHandler"];
+        AudioHandler["AudioMessageHandler"];
+        %% ... other handlers ...
+        HandlerBase --> TextHandler;
+        HandlerBase --> AudioHandler;
+        TextHandler -- "调用插件/TTS" --> TaskDisp;
+        AudioHandler -- "可能调用" --> TaskDisp;
     end
 
+    %% --- Task Dispatching ---
+    subgraph TaskDispatcher ["Task Dispatcher (core/connection/tasks.py)"]
+        TaskDisp["dispatch_plugin(tool_name, args)"];
+        TaskDisp --> PluginExecQueue("Plugin Executor");
+        TaskDisp --> TTSQueue("TTS Queue");
+        TaskDisp --> AudioQueue("Audio Playback Queue");
+    end
 
-    %% --- Plugin Function Execution ---
-    subgraph PluginFunctions ["Plugin Functions (plugins_func/functions/*)"]
+    %% --- State Management ---
+    subgraph StateManager ["State Manager (core/connection/state.py)"]
+        LoadState["load()"]
+        SaveState["save()"]
+    end
+
+    %% --- Background Execution (Similar to before, but triggered differently) ---
+    subgraph BackgroundExecution ["Threading & Async Execution"]
         direction LR
-        PluginAsync["Async Plugin Functions (e.g., *_async)"]
-        PluginSync["Sync Plugin Functions (run in Executor)"]
-        PluginAsync -- 可能调用 --> RunPluginAsync(run_coroutine_threadsafe);
-    end
+        PluginExecQueue -- 任务 --> Executor[ThreadPoolExecutor];
+        TTSQueue -- 任务 --> TTSThread["TTS Thread"];
+        AudioQueue -- 任务 --> AudioThread["Audio Playback Thread"];
 
-    %% --- Interactions with the Main Event Loop ---
-    subgraph EventLoopInteractions ["Event Loop Interactions (asyncio)"]
-        direction TB
+        Executor -- "完成/需交互" --> RunExecAsync(run_coroutine_threadsafe);
+        TTSThread -- "完成/需交互" --> RunTTSAsync(run_coroutine_threadsafe);
+        AudioThread -- "需交互" --> RunAudioAsync(run_coroutine_threadsafe);
+
+        RunExecAsync --> B;
         RunTTSAsync --> B;
         RunAudioAsync --> B;
-        RunExecAsync --> B;
-        RunPluginAsync --> B;
-        B -- 执行协程 --> V(WebSocket 发送/状态更新等);
     end
 
-    %% --- Styling (Optional) ---
-    classDef thread fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef executor fill:#ccf,stroke:#333,stroke-width:2px;
-    class L_Thread,M_Thread,TTSThread,AudioPlaybackThread thread
-    class Executor executor;
+
+    %% --- Dependencies & Interactions ---
+    G --> AuthMiddlewareComponent;
+    G --> Router;
+    G --> TaskDispatcher;
+    G --> StateManager;
+
+    K --> Router;
+    L --> Handlers;
+
+    %% Styling (Optional)
+    classDef component fill:#cff,stroke:#333,stroke-width:1px;
+    classDef thread fill:#f9f,stroke:#333,stroke-width:1px;
+    classDef queue fill:#ffc,stroke:#333,stroke-width:1px;
+    class ConnectionManager,AuthMiddlewareComponent,Router,Handlers,TaskDispatcher,StateManager component;
+    class TTSThread,AudioThread thread;
+    class PluginExecQueue,TTSQueue,AudioQueue queue;
