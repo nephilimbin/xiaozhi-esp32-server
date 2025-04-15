@@ -133,7 +133,7 @@ class ConnectionHandler:
 
             self.welcome_msg = self.config["xiaozhi"]
             self.welcome_msg["session_id"] = self.session_id
-            await self.websocket.send(json.dumps(self.welcome_msg))
+            await self.channel.send_message(self.welcome_msg)
             # Load private configuration if device_id is provided
             bUsePrivateConfig = self.config.get("use_private_config", False)
             if bUsePrivateConfig and device_id:
@@ -725,15 +725,11 @@ class ConnectionHandler:
                 self.logger.bind(tag=TAG).error(f"TTS任务处理错误: {e}")
                 self.clearSpeakStatus()
                 asyncio.run_coroutine_threadsafe(
-                    self.websocket.send(
-                        json.dumps(
-                            {
-                                "type": "tts",
-                                "state": "stop",
-                                "session_id": self.session_id,
-                            }
-                        )
-                    ),
+                    self.channel.send_message({
+                        "type": "tts",
+                        "state": "stop",
+                        "session_id": self.session_id,
+                    }),
                     self.loop,
                 )
                 self.logger.bind(tag=TAG).error(

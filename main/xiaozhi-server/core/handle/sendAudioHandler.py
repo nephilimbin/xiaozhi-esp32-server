@@ -39,7 +39,7 @@ async def sendAudio(conn, audios):
     # 预缓冲：发送前 3 帧
     pre_buffer = min(3, len(audios))
     for i in range(pre_buffer):
-        await conn.websocket.send(audios[i])
+        await conn.channel.send_bytes(audios[i])
 
     # 正常播放剩余帧
     for opus_packet in audios[pre_buffer:]:
@@ -54,7 +54,7 @@ async def sendAudio(conn, audios):
         if delay > 0:
             await asyncio.sleep(delay)
 
-        await conn.websocket.send(opus_packet)
+        await conn.channel.send_bytes(opus_packet)
 
         play_position += frame_duration
 
@@ -77,23 +77,21 @@ async def send_tts_message(conn, state, text=None):
         conn.clearSpeakStatus()
 
     # Use channel to send the message
-    await conn.websocket.send(json.dumps(message))
+    await conn.channel.send_message(message)
 
 
 async def send_stt_message(conn, text):
     """发送 STT 状态消息"""
     stt_text = get_string_no_punctuation_or_emoji(text)
-    await conn.websocket.send(
-        json.dumps({"type": "stt", "text": stt_text, "session_id": conn.session_id})
-    )
-    await conn.websocket.send(
-        json.dumps(
-            {
-                "type": "llm",
-                "text": "😊",
-                "emotion": "happy",
-                "session_id": conn.session_id,
-            }
-        )
-    )
+    stt_message = {"type": "stt", "text": stt_text, "session_id": conn.session_id}
+    await conn.channel.send_message(stt_message)
+
+    llm_thinking_message = {
+        "type": "llm",
+        "text": "😊",
+        "emotion": "happy",
+        "session_id": conn.session_id,
+    }
+    await conn.channel.send_message(llm_thinking_message)
+
     await send_tts_message(conn, "start")

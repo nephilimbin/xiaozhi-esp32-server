@@ -23,16 +23,13 @@ class ICommunicationChannel(ABC):
         """
         pass
 
-    # @abstractmethod
-    # async def receive(self) -> Any:
-    #     """Receives a message from the channel."""
-    #     pass
-
-    # @abstractmethod
-    # async def close(self) -> None:
-    #     """Closes the communication channel."""
-    #     pass
-
+    @abstractmethod
+    async def send_bytes(self, data: bytes) -> None:
+        """
+        Sends raw bytes data through the channel.
+        Useful for cases where no specific structure or serialization is needed.
+        """
+        pass
 
 
     # Helper methods can remain here or be moved if they don't rely on abstract state

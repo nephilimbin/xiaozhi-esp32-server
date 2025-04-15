@@ -16,17 +16,17 @@
 - 理由： 建立目标文件结构，同时不破坏任何现有功能。
 - 测试： 启动服务器。它应该和之前完全一样运行，因为没有逻辑被改变。
 
-第 2 步：使用 WebSocketChannel 替换发送调用 (调整后方案)
+第 2 步：使用 WebSocketChannel 替换发送调用 (调整后方案) - **已完成**
 - **目标**: 将 `core/connection.py` 中对底层 `websocket.send()` 的直接调用，替换为通过你现有的 `core/channels/websocket.py::WebSocketChannel` 类的方法调用，以封装发送逻辑。
 - **操作**:
-    1.  **确认依赖**: 确保 `core/channels/interface.py::ICommunicationChannel` 和 `core/channels/websocket.py::WebSocketChannel` 文件存在且包含发送相关方法 (`send_message`, `send_raw_string`, `send_text` 等)。
-    2.  **实例化 Channel**: 在 `core/connection.py` 的 `handle_connection` 方法或类的 `__init__` 中，当 `self.websocket` 被赋值后，创建实例: `self.channel = WebSocketChannel(self.websocket)`。
-    3.  **替换发送调用**: 仔细查找 `core/connection.py` 中所有 `await self.websocket.send(...)` 的调用。根据发送内容的类型（JSON 字典、普通文本等），将其替换为 `await self.channel.send_message(...)`、`await self.channel.send_raw_string(...)` 或 `await self.channel.send_text(...)` 等。
-    4.  **保持不变**: **重要** - 在此步骤中，**不要**修改 `async for message in self.websocket:` 消息接收循环，也**不要**修改 `close()` 方法中的状态清理逻辑和 `await self.websocket.close()` 调用。这些将在后续步骤（主要是第 8 步）中处理。
-    5.  **无需修改 Channel**: 在此步骤中，**不需要**在 `ICommunicationChannel` 或 `WebSocketChannel` 中实现或修改 `receive()` 或 `close()` 方法。
-    6.  **(清理)** 如果 `core/channels/websocket_wrapper.py` 文件存在，可以将其删除，因为它已被 `websocket.py` 替代。
+    1.  **确认依赖**: 确认 `ICommunicationChannel` 和 `WebSocketChannel` 存在且包含发送方法。 (**已确认**)
+    2.  **实例化 Channel**: 在 `core/connection.py` 中创建 `self.channel = WebSocketChannel(self.websocket)`。 (**已完成**)
+    3.  **替换发送调用**: 查找 `core/connection.py` 及相关处理函数 (`sendAudioHandler.py`, `iotHandler.py`) 中的 `websocket.send` 调用，替换为 `channel.send_message`, `channel.send_raw_string`, `channel.send_bytes`。 (**已完成**)
+    4.  **保持不变**: 接收循环 (`async for message in self.websocket:`) 和 `websocket.close()` 调用保持不变。 (**已确认**)
+    5.  **无需修改 Channel**: `receive()` 或 `close()` 方法未在此步骤实现。 (**已确认**, `send_bytes` 已按需添加)
+    6.  **(清理)** `websocket_wrapper.py` 不存在，无需删除。 (**已确认**)
 - **理由**: 优先封装发送逻辑，风险较低。将复杂的接收循环和清理逻辑的迁移推迟到更合适的步骤（第 8 步）。
-- **测试**: 测试所有需要服务器主动发送消息给客户端的场景（例如：发送欢迎消息、发送 TTS 音频数据、发送 STT 结果、发送错误信息等）。确保消息仍然能够正确发送。接收消息和连接关闭功能应保持不变。
+- **测试**: 测试所有需要服务器主动发送消息给客户端的场景（例如：发送欢迎消息、发送 TTS 音频数据、发送 STT 结果、发送错误信息等）。确保消息仍然能够正确发送。接收消息和连接关闭功能应保持不变。 (**需要手动测试确认**)
 
 第 3 步：提取 Authenticator (**注意: 使用现有的 AuthMiddleware**)
 - 操作：

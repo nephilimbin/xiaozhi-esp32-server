@@ -42,6 +42,7 @@ class WebSocketChannel(ICommunicationChannel):
         if self.websocket:
             try:
                 await self.websocket.send(text)
+                logger.bind(tag=TAG).debug(f"发送字符串: {text}")
             except websockets.exceptions.ConnectionClosed:
                 logger.bind(tag=TAG).warning(f"Attempted to send raw string on closed WebSocket. Session: {self.session_id}")
             except Exception as e:
@@ -49,34 +50,13 @@ class WebSocketChannel(ICommunicationChannel):
         else:
             logger.bind(tag=TAG).error("WebSocket is not initialized for send_raw_string.")
 
-    # async def receive(self) -> Any:
-    #         if self.websocket:
-    #             try:
-    #                 return await self.websocket.recv()
-    #             except websockets.exceptions.ConnectionClosed:
-    #                 logger.bind(tag=TAG).warning(f"Attempted to receive on closed WebSocket. Session: {self.session_id}")
-    #                 # Re-raise or return a specific value to signal closure
-    #                 raise # Or return None, or a sentinel object
-    #             except Exception as e:
-    #                 logger.bind(tag=TAG).error(f"Error receiving WebSocket message: {e}. Session: {self.session_id}", exc_info=True)
-    #                 raise # Or handle differently
-    #         else:
-    #             logger.bind(tag=TAG).error("WebSocket is not initialized for receive.")
-    #             raise ConnectionError("WebSocket not initialized") # Or return sentinel
+    async def send_bytes(self, data: bytes):
+        """直接发送字节数据"""
+        if not self.websocket:
+            logger.bind(tag=TAG).error("WebSocket is not initialized.")
+            return
+        await self.websocket.send(data)
+        # 通常不记录二进制数据，除非需要调试
+        # logger.bind(tag=TAG).debug(f"发送字节数据，长度: {len(data)}")
 
-    # async def close(self) -> None:
-    #     if self.websocket:
-    #         try:
-    #             await self.websocket.close()
-    #             logger.bind(tag=TAG).info(f"WebSocket connection closed. Session: {self.session_id}")
-    #         except Exception as e:
-    #             # Log error but might not need to raise if already closing
-    #             logger.bind(tag=TAG).error(f"Error closing WebSocket: {e}. Session: {self.session_id}", exc_info=True)
-    #     else:
-    #             logger.bind(tag=TAG).warning("Attempted to close an uninitialized WebSocket.")
 
-    # Override helper methods if specific behavior is needed for WebSocket
-    # For now, inheriting the default send_json and send_text which call
-    # the implemented send_message should be fine.
-
-    # Implement other methods like close, is_active if needed from the interface 
