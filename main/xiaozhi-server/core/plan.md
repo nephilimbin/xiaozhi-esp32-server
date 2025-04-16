@@ -28,7 +28,7 @@
 - **理由**: 优先封装发送逻辑，风险较低。将复杂的接收循环和清理逻辑的迁移推迟到更合适的步骤（第 8 步）。
 - **测试**: 测试所有需要服务器主动发送消息给客户端的场景（例如：发送欢迎消息、发送 TTS 音频数据、发送 STT 结果、发送错误信息等）。确保消息仍然能够正确发送。接收消息和连接关闭功能应保持不变。 (**需要手动测试确认**)
 
-第 3 步：提取 Authenticator (**注意: 使用现有的 AuthMiddleware**)
+第 3 步：提取 Authenticator (**注意: 使用现有的 AuthMiddleware**) - **已完成确认**
 - 操作：
     - 在 `core/connection.py` 的 `handle_connection`（或管理连接的类）中定位执行身份验证的代码块（例如 `await self.auth.authenticate(...)`)。
     - **(调整)** 由于 `core/auth.py` 中已存在 `AuthMiddleware` 及其 `authenticate` 方法，此步骤主要是确认 `core/connection.py` 中调用该方法的逻辑是否正确和独立，为后续将其移入 `ConnectionManager` 做准备。检查点：是否可以通过传入 `AuthMiddleware` 实例和 `headers` 来完成认证？

@@ -152,6 +152,8 @@ selected_module:
   # 默认免费的ChatGLMLLM就已经支持function_call，但是如果像追求稳定建议把LLM设置成：DoubaoLLM，使用的具体model_name是：doubao-pro-32k-functioncall-241028
   Intent: function_call
 
+# 是否使用私人配置 [TODO]后期需要修复下，因为私有配置中缺少私有化的必要字段值，以后再添加。
+use_private_config: false
 # 意图识别，是用于理解用户意图的模块，例如：播放音乐
 Intent:
   # 不使用意图识别

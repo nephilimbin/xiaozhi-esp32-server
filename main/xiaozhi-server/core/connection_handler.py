@@ -25,10 +25,10 @@ from core.handle.sendAudioHandler import sendAudioMessage, send_stt_message
 from core.handle.receiveAudioHandler import handleAudioMessage
 from core.handle.functionHandler import FunctionHandler
 from plugins_func.register import Action, ActionResponse
-from config.private_config import PrivateConfig
 from core.auth import AuthMiddleware, AuthenticationError
 from core.utils.auth_code_gen import AuthCodeGenerator
 from core.mcp.manager import MCPManager
+from .connection.state import StateManager
 
 TAG = __name__
 
@@ -104,6 +104,7 @@ class ConnectionHandler:
             if len(cmd) > self.max_cmd_length:
                 self.max_cmd_length = len(cmd)
 
+        self.state_manager = StateManager()
         self.private_config = None
         self.auth_code_gen = AuthCodeGenerator.get_instance()
         self.is_device_verified = False  # 添加设备验证状态标志
@@ -134,39 +135,33 @@ class ConnectionHandler:
             self.welcome_msg = self.config["xiaozhi"]
             self.welcome_msg["session_id"] = self.session_id
             await self.channel.send_message(self.welcome_msg)
-            # Load private configuration if device_id is provided
-            bUsePrivateConfig = self.config.get("use_private_config", False)
-            if bUsePrivateConfig and device_id:
-                try:
-                    self.private_config = PrivateConfig(
-                        device_id, self.config, self.auth_code_gen
+
+            # Load private configuration using StateManager
+            self.private_config, self.is_device_verified = await self.state_manager.load_private_config(
+                self.headers,
+                self.config,
+                self.auth_code_gen
+            )
+
+            # If private config was loaded, check for private LLM/TTS instances and update last chat time
+            if self.private_config:
+                if self.is_device_verified:
+                    # Update chat time only if device is verified
+                    await self.private_config.update_last_chat_time()
+
+                # Try creating private instances and update if successful
+                private_llm, private_tts = self.private_config.create_private_instances()
+                if all([private_llm, private_tts]):
+                    self.llm = private_llm
+                    self.tts = private_tts
+                    self.logger.bind(tag=TAG).info(
+                        f"Loaded private config and instances for device {self.private_config.device_id}"
                     )
-                    await self.private_config.load_or_create()
-                    # 判断是否已经绑定
-                    owner = self.private_config.get_owner()
-                    self.is_device_verified = owner is not None
-
-                    if self.is_device_verified:
-                        await self.private_config.update_last_chat_time()
-
-                    llm, tts = self.private_config.create_private_instances()
-                    if all([llm, tts]):
-                        self.llm = llm
-                        self.tts = tts
-                        self.logger.bind(tag=TAG).info(
-                            f"Loaded private config and instances for device {device_id}"
-                        )
-                    else:
-                        self.logger.bind(tag=TAG).error(
-                            f"Failed to create instances for device {device_id}"
-                        )
-                        self.private_config = None
-                except Exception as e:
+                else:
                     self.logger.bind(tag=TAG).error(
-                        f"Error initializing private config: {e}"
+                        f"Failed to create private LLM/TTS instances for device {self.private_config.device_id}, using defaults."
                     )
-                    self.private_config = None
-                    raise
+                    # Keep using default LLM/TTS, private_config might still be useful for prompts etc.
 
             # 异步初始化
             self.executor.submit(self._initialize_components)
@@ -201,9 +196,11 @@ class ConnectionHandler:
     async def _save_and_close(self, ws):
         """保存记忆并关闭连接"""
         try:
-            await self.memory.save_memory(self.dialogue.dialogue)
+            # Use StateManager to save memory
+            await self.state_manager.save_memory(self.memory, self.dialogue.dialogue)
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"保存记忆失败: {e}")
+            # Logging is now handled within save_memory, but keep high-level log
+            self.logger.bind(tag=TAG).error(f"Error during save and close process: {e}")
         finally:
             await self.close(ws)
 

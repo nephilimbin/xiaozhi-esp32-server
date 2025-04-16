@@ -1,0 +1,38 @@
+{
+  // 使用 IntelliSense 了解相关属性。
+  // 悬停以查看现有属性的描述。
+  // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      //配置名称
+      "name": "Python Debugger: Current File",
+      // 调试器类型
+      "type": "debugpy",
+      // 调试请求类型
+      "request": "launch",
+      // 调试程序路径${file}是当前文件的路径
+      "program": "${workspaceFolder}/main/xiaozhi-server/app.py",
+      // 调试器终端类型integratedTerminal 集成终端 externalTerminal 外部终端
+      "console": "integratedTerminal",
+      "env": {
+        // 设置PYTHONPATH环境变量，使得Python解释器能够找到src目录  添加之后能够直接 import 目录下的py文件
+        // 使用分号; 分隔多个路径
+        // ${workspaceFolder} 是VSCode的工作区目录，即包含.vscode目录的目录
+        // ${workspaceFolderBasename} 是工作区目录的名称
+        // "PYTHONPATH": "${workspaceFolder}/spider_template;${workspaceFolder}/requests_files1"
+        "PYTHONPATH": "/opt/anaconda3/envs/javus",
+        "DYLD_LIBRARY_PATH": "/opt/homebrew/lib:$DYLD_LIBRARY_PATH"
+      },
+      // 禁用Just My Code，这样调试器不会跳过第三方库的代码
+      "justMyCode": false,
+      // 设置工作目录为当前文件所在目录  工作目录是调试器启动时所在的目录
+      "cwd": "${workspaceFolder}/main/xiaozhi-server",
+      //python解释器
+      "python": "/opt/anaconda3/envs/javus/bin/python"
+      // 设置Python解释器参数  执行参数
+      //添加多个参数
+      //   "args": ["test", "test2", "test3"]
+    }
+  ]
+}
