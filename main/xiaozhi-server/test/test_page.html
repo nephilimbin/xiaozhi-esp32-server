@@ -447,6 +447,7 @@
         let isPlaying = false;
         let opusDecoder = null; // Opus解码器
         let visualizationRequest = null; // 动画帧请求ID
+        let expectingMp3Data = false; // 新增：标志是否期待接收MP3数据
 
         // 音频流缓冲相关
         let audioBuffers = []; // 用于存储接收到的所有音频数据
@@ -540,16 +541,16 @@
         // 开始音频缓冲过程
         function startAudioBuffering() {
             if (isAudioBuffering || isAudioPlaying) return;
-            
+
             isAudioBuffering = true;
             log("开始音频缓冲...", 'info');
-            
+
             // 先尝试初始化解码器，以便在播放时已准备好
             initOpusDecoder().catch(error => {
                 log(`预初始化Opus解码器失败: ${error.message}`, 'warning');
                 // 继续缓冲，我们会在播放时再次尝试初始化
             });
-            
+
             // 设置超时，如果在一定时间内没有收集到足够的音频包，就开始播放
             setTimeout(() => {
                 if (isAudioBuffering && audioBufferQueue.length > 0) {
@@ -557,14 +558,14 @@
                     playBufferedAudio();
                 }
             }, 300); // 300ms超时
-            
+
             // 监控缓冲进度
             const bufferCheckInterval = setInterval(() => {
                 if (!isAudioBuffering) {
                     clearInterval(bufferCheckInterval);
                     return;
                 }
-                
+
                 // 当累积了足够的音频包，开始播放
                 if (audioBufferQueue.length >= BUFFER_THRESHOLD) {
                     clearInterval(bufferCheckInterval);
@@ -577,10 +578,10 @@
         // 播放已缓冲的音频
         function playBufferedAudio() {
             if (isAudioPlaying || audioBufferQueue.length === 0) return;
-            
+
             isAudioPlaying = true;
             isAudioBuffering = false;
-            
+
             // 确保Opus解码器已初始化
             const initDecoderAndPlay = async () => {
                 try {
@@ -591,7 +592,7 @@
                         });
                         log('创建音频上下文，采样率: ' + SAMPLE_RATE + 'Hz', 'debug');
                     }
-                    
+
                     // 确保解码器已初始化
                     if (!opusDecoder) {
                         log('初始化Opus解码器...', 'info');
@@ -607,7 +608,7 @@
                             return;
                         }
                     }
-                    
+
                     // 创建流式播放上下文
                     if (!streamingContext) {
                         streamingContext = {
@@ -617,16 +618,16 @@
                             source: null,       // 当前音频源
                             totalSamples: 0,    // 累积的总样本数
                             lastPlayTime: 0,    // 上次播放的时间戳
-                            
+
                             // 将Opus数据解码为PCM
-                            decodeOpusFrames: async function(opusFrames) {
+                            decodeOpusFrames: async function (opusFrames) {
                                 if (!opusDecoder) {
                                     log('Opus解码器未初始化，无法解码', 'error');
                                     return;
                                 }
-                                
+
                                 let decodedSamples = [];
-                                
+
                                 for (const frame of opusFrames) {
                                     try {
                                         // 使用Opus解码器解码
@@ -640,12 +641,12 @@
                                         log("Opus解码失败: " + error.message, 'error');
                                     }
                                 }
-                                
+
                                 if (decodedSamples.length > 0) {
                                     // 添加到解码队列
                                     this.queue.push(...decodedSamples);
                                     this.totalSamples += decodedSamples.length;
-                                    
+
                                     // 如果累积了至少0.2秒的音频，开始播放
                                     const minSamples = SAMPLE_RATE * MIN_AUDIO_DURATION;
                                     if (!this.playing && this.queue.length >= minSamples) {
@@ -655,50 +656,50 @@
                                     log('没有成功解码的样本', 'warning');
                                 }
                             },
-                            
+
                             // 开始播放音频
-                            startPlaying: function() {
+                            startPlaying: function () {
                                 if (this.playing || this.queue.length === 0) return;
-                                
+
                                 this.playing = true;
-                                
+
                                 // 创建新的音频缓冲区
                                 const minPlaySamples = Math.min(this.queue.length, SAMPLE_RATE); // 最多播放1秒
                                 const currentSamples = this.queue.splice(0, minPlaySamples);
-                                
+
                                 const audioBuffer = audioContext.createBuffer(CHANNELS, currentSamples.length, SAMPLE_RATE);
                                 audioBuffer.copyToChannel(new Float32Array(currentSamples), 0);
-                                
+
                                 // 创建音频源
                                 this.source = audioContext.createBufferSource();
                                 this.source.buffer = audioBuffer;
-                                
+
                                 // 创建增益节点用于平滑过渡
                                 const gainNode = audioContext.createGain();
-                                
+
                                 // 应用淡入淡出效果避免爆音
                                 const fadeDuration = 0.02; // 20毫秒
                                 gainNode.gain.setValueAtTime(0, audioContext.currentTime);
                                 gainNode.gain.linearRampToValueAtTime(1, audioContext.currentTime + fadeDuration);
-                                
+
                                 const duration = audioBuffer.duration;
                                 if (duration > fadeDuration * 2) {
                                     gainNode.gain.setValueAtTime(1, audioContext.currentTime + duration - fadeDuration);
                                     gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + duration);
                                 }
-                                
+
                                 // 连接节点并开始播放
                                 this.source.connect(gainNode);
                                 gainNode.connect(audioContext.destination);
-                                
+
                                 this.lastPlayTime = audioContext.currentTime;
                                 log(`开始播放 ${currentSamples.length} 个样本，约 ${(currentSamples.length / SAMPLE_RATE).toFixed(2)} 秒`, 'info');
-                                
+
                                 // 播放结束后的处理
                                 this.source.onended = () => {
                                     this.source = null;
                                     this.playing = false;
-                                    
+
                                     // 如果队列中还有数据或者缓冲区有新数据，继续播放
                                     if (this.queue.length > 0) {
                                         setTimeout(() => this.startPlaying(), 10);
@@ -729,26 +730,26 @@
                                         }, 500); // 500ms超时
                                     }
                                 };
-                                
+
                                 this.source.start();
                             }
                         };
                     }
-                    
+
                     // 开始处理缓冲的数据
                     const frames = [...audioBufferQueue];
                     audioBufferQueue = []; // 清空缓冲队列
-                    
+
                     // 解码并播放
                     await streamingContext.decodeOpusFrames(frames);
-                    
+
                 } catch (error) {
                     log(`播放已缓冲的音频出错: ${error.message}`, 'error');
                     isAudioPlaying = false;
                     streamingContext = null;
                 }
             };
-            
+
             // 执行初始化和播放
             initDecoderAndPlay();
         }
@@ -766,7 +767,7 @@
         // 初始化Opus解码器 - 确保完全初始化完成后才返回
         async function initOpusDecoder() {
             if (opusDecoder) return opusDecoder; // 已经初始化
-            
+
             try {
                 // 检查ModuleInstance是否存在
                 if (typeof window.ModuleInstance === 'undefined') {
@@ -778,9 +779,9 @@
                         throw new Error('Opus库未加载，ModuleInstance和Module对象都不存在');
                     }
                 }
-                
+
                 const mod = window.ModuleInstance;
-                
+
                 // 创建解码器对象
                 opusDecoder = {
                     channels: CHANNELS,
@@ -788,55 +789,55 @@
                     frameSize: FRAME_SIZE,
                     module: mod,
                     decoderPtr: null, // 初始为null
-                    
+
                     // 初始化解码器
-                    init: function() {
+                    init: function () {
                         if (this.decoderPtr) return true; // 已经初始化
-                        
+
                         // 获取解码器大小
                         const decoderSize = mod._opus_decoder_get_size(this.channels);
                         log(`Opus解码器大小: ${decoderSize}字节`, 'debug');
-                        
+
                         // 分配内存
                         this.decoderPtr = mod._malloc(decoderSize);
                         if (!this.decoderPtr) {
                             throw new Error("无法分配解码器内存");
                         }
-                        
+
                         // 初始化解码器
                         const err = mod._opus_decoder_init(
                             this.decoderPtr,
                             this.rate,
                             this.channels
                         );
-                        
+
                         if (err < 0) {
                             this.destroy(); // 清理资源
                             throw new Error(`Opus解码器初始化失败: ${err}`);
                         }
-                        
+
                         log("Opus解码器初始化成功", 'success');
                         return true;
                     },
-                    
+
                     // 解码方法
-                    decode: function(opusData) {
+                    decode: function (opusData) {
                         if (!this.decoderPtr) {
                             if (!this.init()) {
                                 throw new Error("解码器未初始化且无法初始化");
                             }
                         }
-                        
+
                         try {
                             const mod = this.module;
-                            
+
                             // 为Opus数据分配内存
                             const opusPtr = mod._malloc(opusData.length);
                             mod.HEAPU8.set(opusData, opusPtr);
-                            
+
                             // 为PCM输出分配内存
                             const pcmPtr = mod._malloc(this.frameSize * 2); // Int16 = 2字节
-                            
+
                             // 解码
                             const decodedSamples = mod._opus_decode(
                                 this.decoderPtr,
@@ -846,46 +847,46 @@
                                 this.frameSize,
                                 0 // 不使用FEC
                             );
-                            
+
                             if (decodedSamples < 0) {
                                 mod._free(opusPtr);
                                 mod._free(pcmPtr);
                                 throw new Error(`Opus解码失败: ${decodedSamples}`);
                             }
-                            
+
                             // 复制解码后的数据
                             const decodedData = new Int16Array(decodedSamples);
                             for (let i = 0; i < decodedSamples; i++) {
                                 decodedData[i] = mod.HEAP16[(pcmPtr >> 1) + i];
                             }
-                            
+
                             // 释放内存
                             mod._free(opusPtr);
                             mod._free(pcmPtr);
-                            
+
                             return decodedData;
                         } catch (error) {
                             log(`Opus解码错误: ${error.message}`, 'error');
                             return new Int16Array(0);
                         }
                     },
-                    
+
                     // 销毁方法
-                    destroy: function() {
+                    destroy: function () {
                         if (this.decoderPtr) {
                             this.module._free(this.decoderPtr);
                             this.decoderPtr = null;
                         }
                     }
                 };
-                
+
                 // 初始化解码器
                 if (!opusDecoder.init()) {
                     throw new Error("Opus解码器初始化失败");
                 }
-                
+
                 return opusDecoder;
-                
+
             } catch (error) {
                 log(`Opus解码器初始化失败: ${error.message}`, 'error');
                 opusDecoder = null; // 重置为null，以便下次重试
@@ -1211,6 +1212,20 @@
                                         recordButton.classList.remove('recording');
                                     }
                                 }
+                            } else if (message.type === 'tts_mp3') {
+                                // --- 新增：处理 MP3 TTS 消息 ---
+                                if (message.state === 'start') {
+                                    log(`服务器开始发送MP3语音: ${message.text || ''} (索引: ${message.index})`, 'info');
+                                    expectingMp3Data = true; // 设置标志，下一个二进制消息是MP3
+                                    // 可选：在会话中显示文本
+                                    if (message.text) {
+                                        addMessage(message.text); // 保持和原来TTS一样的文本显示逻辑
+                                    }
+                                } else if (message.state === 'end') {
+                                    log(`服务器MP3语音传输结束 (索引: ${message.index})`, 'info');
+                                    // MP3 的结束主要由音频播放完处理，这里只记录日志
+                                }
+                                // --- 结束：处理 MP3 TTS 消息 ---
                             } else if (message.type === 'audio') {
                                 // 音频控制消息
                                 log(`收到音频控制消息: ${JSON.stringify(message)}`, 'info');
@@ -2052,6 +2067,36 @@
         }
 
         async function handleBinaryMessage(data) {
+            // --- 新增：检查是否是 MP3 数据 ---
+            if (expectingMp3Data) {
+                log('接收到预期的MP3二进制数据', 'info');
+                try {
+                    let arrayBuffer;
+                    if (data instanceof ArrayBuffer) {
+                        arrayBuffer = data;
+                    } else if (data instanceof Blob) {
+                        arrayBuffer = await data.arrayBuffer();
+                    } else {
+                        log('收到的MP3数据类型未知，无法处理', 'error');
+                        expectingMp3Data = false; // 重置标志
+                        return;
+                    }
+
+                    if (arrayBuffer && arrayBuffer.byteLength > 0) {
+                        mp3PlaybackQueue.push(arrayBuffer); // 将数据放入队列
+                        checkAndPlayNextMp3();           // 尝试播放队列中的下一个
+                    } else {
+                        log('收到的MP3数据为空', 'warning');
+                    }
+                } catch (error) {
+                    log(`处理MP3数据时出错: ${error.message}`, 'error');
+                }
+                expectingMp3Data = false; // 处理完后重置标志
+                return; // MP3数据处理完毕，不再执行后续Opus逻辑
+            }
+            // --- 结束：检查是否是 MP3 数据 ---
+
+            // --- 保留原有的 Opus 流处理逻辑 --- 
             try {
                 let arrayBuffer;
 
@@ -2074,19 +2119,19 @@
                 if (opusData.length > 0) {
                     // 将数据添加到缓冲队列
                     audioBufferQueue.push(opusData);
-                    
+
                     // 如果收到的是第一个音频包，开始缓冲过程
                     if (audioBufferQueue.length === 1 && !isAudioBuffering && !isAudioPlaying) {
                         startAudioBuffering();
                     }
                 } else {
                     log('收到空音频数据帧，可能是结束标志', 'warning');
-                    
+
                     // 如果缓冲队列中有数据且没有在播放，立即开始播放
                     if (audioBufferQueue.length > 0 && !isAudioPlaying) {
                         playBufferedAudio();
                     }
-                    
+
                     // 如果正在播放，发送结束信号
                     if (isAudioPlaying && streamingContext) {
                         streamingContext.endOfStream = true;
@@ -2095,6 +2140,99 @@
             } catch (error) {
                 log(`处理二进制消息出错: ${error.message}`, 'error');
             }
+        }
+
+        // --- 新增：播放 MP3 音频的函数 ---
+        // function playMp3Audio(arrayBuffer) { // <-- 删除这个旧函数
+        //     log(`准备播放MP3音频，大小: ${(arrayBuffer.byteLength / 1024).toFixed(2)} KB`, 'info');
+        //     try {
+        //         const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+        //         const objectUrl = URL.createObjectURL(blob);
+        //
+        //         const audioElement = new Audio();
+        //         audioElement.src = objectUrl;
+        //
+        //         audioElement.onplay = () => {
+        //             log('MP3音频开始播放');
+        //         };
+        //
+        //         audioElement.onended = () => {
+        //             log('MP3音频播放结束');
+        //             URL.revokeObjectURL(objectUrl); // 释放内存
+        //             // 可选：移除audio元素（如果它被添加到DOM中）
+        //             // audioElement.remove();
+        //         };
+        //
+        //         audioElement.onerror = (e) => {
+        //             log(`MP3音频播放错误: ${e.message || '未知错误'}`, 'error');
+        //             URL.revokeObjectURL(objectUrl); // 发生错误也要释放内存
+        //         };
+        //
+        //         // 开始播放
+        //         audioElement.play().catch(e => {
+        //             log(`调用 play() 失败: ${e.message}`, 'error');
+        //             URL.revokeObjectURL(objectUrl); // 播放失败也要释放
+        //         });
+        //
+        //     } catch (error) {
+        //         log(`创建或播放MP3音频时出错: ${error.message}`, 'error');
+        //     }
+        // } // <-- 删除这个旧函数
+        // --- 结束：播放 MP3 音频的函数 ---
+
+        // --- 新增：MP3 播放队列和状态 ---
+        let mp3PlaybackQueue = []; // 用于存储接收到的 MP3 ArrayBuffer
+        let isMp3Playing = false;   // 标志当前是否有 MP3 在播放
+        // --- 结束：MP3 播放队列和状态 ---
+
+        function checkAndPlayNextMp3() {
+            // 如果当前正在播放，或者队列为空，则不做任何事
+            if (isMp3Playing || mp3PlaybackQueue.length === 0) {
+                return;
+            }
+
+            // 标记为正在播放
+            isMp3Playing = true;
+
+            // 从队列头部取出一个 ArrayBuffer
+            const arrayBufferToPlay = mp3PlaybackQueue.shift();
+
+            // --- 复用 playMp3Audio 的核心逻辑 ---
+            log(`从队列取出MP3播放，大小: ${(arrayBufferToPlay.byteLength / 1024).toFixed(2)} KB, 剩余队列: ${mp3PlaybackQueue.length}`, 'info');
+            try {
+                const blob = new Blob([arrayBufferToPlay], { type: 'audio/mpeg' });
+                const objectUrl = URL.createObjectURL(blob);
+                const audioElement = new Audio();
+                audioElement.src = objectUrl;
+
+                audioElement.onplay = () => { log('队列MP3音频开始播放'); };
+
+                audioElement.onended = () => {
+                    log('队列MP3音频播放结束');
+                    URL.revokeObjectURL(objectUrl);
+                    isMp3Playing = false; // 标记播放结束
+                    checkAndPlayNextMp3(); // 检查并播放下一个
+                };
+
+                audioElement.onerror = (e) => {
+                    log(`队列MP3音频播放错误: ${e.message || '未知错误'}`, 'error');
+                    URL.revokeObjectURL(objectUrl);
+                    isMp3Playing = false; // 即使出错也要标记结束
+                    checkAndPlayNextMp3(); // 尝试播放下一个
+                };
+
+                audioElement.play().catch(e => {
+                    log(`队列调用 play() 失败: ${e.message}`, 'error');
+                    URL.revokeObjectURL(objectUrl);
+                    isMp3Playing = false; // 播放失败也要标记结束
+                    checkAndPlayNextMp3(); // 尝试播放下一个
+                });
+            } catch (error) {
+                log(`创建或播放队列MP3时出错: ${error.message}`, 'error');
+                isMp3Playing = false; // 出错也要标记结束
+                checkAndPlayNextMp3(); // 尝试播放下一个
+            }
+            // --- 核心逻辑结束 ---
         }
 
         initApp();

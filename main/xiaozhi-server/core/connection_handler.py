@@ -672,6 +672,8 @@ class ConnectionHandler:
     def _tts_priority_thread(self):
         while not self.stop_event.is_set():
             text = None
+            tts_file = None
+            text_index = 0
             try:
                 try:
                     future = self.tts_queue.get(timeout=1)
@@ -681,76 +683,167 @@ class ConnectionHandler:
                     continue
                 if future is None:
                     continue
-                text = None
-                opus_datas, text_index, tts_file = [], 0, None
+
                 try:
                     self.logger.bind(tag=TAG).debug("正在处理TTS任务...")
                     tts_timeout = self.config.get("tts_timeout", 10)
+                    # speak_and_play returns (tts_file, text, text_index)
                     tts_file, text, text_index = future.result(timeout=tts_timeout)
+
                     if text is None or len(text) <= 0:
-                        self.logger.bind(tag=TAG).error(
-                            f"TTS出错：{text_index}: tts text is empty"
-                        )
-                    elif tts_file is None:
-                        self.logger.bind(tag=TAG).error(
-                            f"TTS出错： file is empty: {text_index}: {text}"
-                        )
+                        self.logger.bind(tag=TAG).error(f"TTS出错：{text_index}: tts text is empty")
+                        continue # Skip further processing for this item
+                    if tts_file is None or not os.path.exists(tts_file):
+                        self.logger.bind(tag=TAG).error(f"TTS出错：文件不存在或为空: {tts_file} for text index {text_index}: {text}")
+                        continue # Skip further processing for this item
+
+                    self.logger.bind(tag=TAG).debug(f"TTS生成完毕：文件路径: {tts_file}, 索引: {text_index}")
+
+                    # --- MP3/Opus Handling Logic ---
+                    tts_output_format = self.config.get('tts_output_format', 'opus_stream')
+
+                    if tts_output_format == 'mp3_file':
+                        self.logger.bind(tag=TAG).debug(f"配置为发送MP3文件，准备读取: {tts_file}")
+                        try:
+                            with open(tts_file, 'rb') as f:
+                                mp3_data = f.read()
+                            # Check client_abort *before* putting into queue
+                            if not self.client_abort:
+                                self.audio_play_queue.put((mp3_data, text, text_index, 'mp3'))
+                                self.logger.bind(tag=TAG).debug(f"MP3数据已放入播放队列, 索引: {text_index}, 大小: {len(mp3_data)} bytes")
+                            else:
+                                self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送MP3数据, 索引: {text_index}")
+                        except Exception as e:
+                            self.logger.bind(tag=TAG).error(f"读取MP3文件失败 {tts_file}: {e}")
+
+                    # Default to opus_stream if format is 'opus_stream' or unknown/not 'mp3_file'
                     else:
-                        self.logger.bind(tag=TAG).debug(
-                            f"TTS生成：文件路径: {tts_file}"
-                        )
-                        if os.path.exists(tts_file):
+                        if tts_output_format != 'opus_stream':
+                             self.logger.bind(tag=TAG).warning(f"未知的 tts_output_format 配置: {tts_output_format}, 使用 opus_stream 处理")
+                        self.logger.bind(tag=TAG).debug(f"配置为发送Opus流，准备转换: {tts_file}")
+                        try:
                             opus_datas, duration = self.tts.audio_to_opus_data(tts_file)
-                        else:
-                            self.logger.bind(tag=TAG).error(
-                                f"TTS出错：文件不存在{tts_file}"
-                            )
+                            if opus_datas:
+                                # Check client_abort *before* putting into queue
+                                if not self.client_abort:
+                                    self.audio_play_queue.put((opus_datas, text, text_index, 'opus'))
+                                    self.logger.bind(tag=TAG).debug(f"Opus数据包已放入播放队列, 索引: {text_index}, 包数量: {len(opus_datas)}")
+                                else:
+                                    self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送Opus数据, 索引: {text_index}")
+                            else:
+                                self.logger.bind(tag=TAG).error(f"Opus转换失败或返回空数据: {tts_file}")
+                        except Exception as e:
+                            self.logger.bind(tag=TAG).error(f"Opus转换失败 {tts_file}: {e}")
+                    # --- End of MP3/Opus Handling Logic ---
+
                 except TimeoutError:
-                    self.logger.bind(tag=TAG).error("TTS超时")
+                    self.logger.bind(tag=TAG).error(f"TTS任务超时, 索引: {text_index}")
                 except Exception as e:
-                    self.logger.bind(tag=TAG).error(f"TTS出错: {e}")
-                if not self.client_abort:
-                    # 如果没有中途打断就发送语音
-                    self.audio_play_queue.put((opus_datas, text, text_index))
-                if (
-                    self.tts.delete_audio_file
-                    and tts_file is not None
-                    and os.path.exists(tts_file)
-                ):
-                    os.remove(tts_file)
+                    self.logger.bind(tag=TAG).error(f"TTS任务内部处理错误, 索引: {text_index}: {e}")
+
             except Exception as e:
-                self.logger.bind(tag=TAG).error(f"TTS任务处理错误: {e}")
+                # Error getting future or outer processing
+                self.logger.bind(tag=TAG).error(f"TTS任务获取或外部处理错误: {e}")
+                # Ensure state is cleared on error
                 self.clearSpeakStatus()
-                asyncio.run_coroutine_threadsafe(
-                    self.channel.send_message({
-                        "type": "tts",
-                        "state": "stop",
-                        "session_id": self.session_id,
-                    }),
-                    self.loop,
-                )
-                self.logger.bind(tag=TAG).error(
-                    f"tts_priority priority_thread: {text} {e}"
-                )
+                if self.channel:
+                    asyncio.run_coroutine_threadsafe(
+                        self.channel.send_message({
+                            "type": "tts", # Keep original type for general stop
+                            "state": "stop",
+                            "session_id": self.session_id,
+                        }),
+                        self.loop,
+                    )
+            finally:
+                # --- File Deletion Logic (Ensured to run) ---
+                # Delete the file after processing, regardless of format, if configured
+                if tts_file and self.tts.delete_audio_file and os.path.exists(tts_file):
+                    try:
+                        os.remove(tts_file)
+                        self.logger.bind(tag=TAG).debug(f"已删除TTS临时文件: {tts_file}")
+                    except Exception as e:
+                        self.logger.bind(tag=TAG).error(f"删除TTS文件失败 {tts_file}: {e}")
+                # --- End of File Deletion Logic ---
 
     def _audio_play_priority_thread(self):
         while not self.stop_event.is_set():
             text = None
+            audio_type = 'unknown'
+            text_index = 0 # Initialize text_index
             try:
                 try:
-                    opus_datas, text, text_index = self.audio_play_queue.get(timeout=1)
+                    # Now receiving (data, text, text_index, type)
+                    data, text, text_index, audio_type = self.audio_play_queue.get(timeout=1)
                 except queue.Empty:
                     if self.stop_event.is_set():
                         break
                     continue
-                future = asyncio.run_coroutine_threadsafe(
-                    sendAudioMessage(self, opus_datas, text, text_index), self.loop
-                )
-                future.result()
+
+                if not self.channel:
+                    self.logger.bind(tag=TAG).warning("音频播放线程: 通信通道未就绪，跳过发送")
+                    continue
+
+                if audio_type == 'opus':
+                    # --- Send Opus Stream ---
+                    self.logger.bind(tag=TAG).debug(f"发送Opus流, 索引: {text_index}, 包数量: {len(data)}")
+                    # Ensure data is the list of opus packets
+                    future = asyncio.run_coroutine_threadsafe(
+                        sendAudioMessage(self, data, text, text_index), self.loop
+                    )
+                    future.result() # Wait for completion
+                    self.logger.bind(tag=TAG).debug(f"Opus流发送完成, 索引: {text_index}")
+
+                elif audio_type == 'mp3':
+                    # --- Send MP3 File ---
+                    mp3_binary_data = data # data is the mp3 bytes
+                    self.logger.bind(tag=TAG).debug(f"准备发送MP3文件, 索引: {text_index}, 大小: {len(mp3_binary_data)} bytes")
+
+                    start_msg = {
+                        "type": "tts_mp3",
+                        "state": "start",
+                        "text": text,
+                        "session_id": self.session_id,
+                        "index": text_index # Include index for client tracking
+                    }
+                    end_msg = {
+                        "type": "tts_mp3",
+                        "state": "end",
+                        "session_id": self.session_id,
+                        "index": text_index
+                    }
+
+                    try:
+                        # Send start message
+                        asyncio.run_coroutine_threadsafe(
+                            self.channel.send_message(start_msg), self.loop
+                        ).result()
+                        self.logger.bind(tag=TAG).debug(f"已发送MP3开始信号, 索引: {text_index}")
+
+                        # Send MP3 binary data
+                        # Use the send_bytes method for binary data
+                        asyncio.run_coroutine_threadsafe(
+                            self.channel.send_bytes(mp3_binary_data), self.loop
+                        ).result()
+                        self.logger.bind(tag=TAG).debug(f"已发送MP3二进制数据, 索引: {text_index}")
+
+                        # Send end message
+                        asyncio.run_coroutine_threadsafe(
+                            self.channel.send_message(end_msg), self.loop
+                        ).result()
+                        self.logger.bind(tag=TAG).debug(f"已发送MP3结束信号, 索引: {text_index}")
+                    except Exception as send_e:
+                         self.logger.bind(tag=TAG).error(f"发送MP3消息时出错 (索引 {text_index}): {send_e}")
+
+                else:
+                     self.logger.bind(tag=TAG).error(f"音频播放队列中收到未知类型: {audio_type}, 索引: {text_index}")
+
             except Exception as e:
+                # Log general errors in the thread loop
                 self.logger.bind(tag=TAG).error(
-                    f"audio_play_priority priority_thread: {text} {e}"
+                    f"音频播放线程出错 (类型: {audio_type}, 索引: {text_index}, 文本: {text}): {e}"
                 )
+                # Consider potential cleanup or state reset needed here
 
     def speak_and_play(self, text, text_index=0):
         if text is None or len(text) <= 0:
