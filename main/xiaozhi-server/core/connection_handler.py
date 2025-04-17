@@ -29,6 +29,7 @@ from core.auth import AuthMiddleware, AuthenticationError
 from core.utils.auth_code_gen import AuthCodeGenerator
 from core.mcp.manager import MCPManager
 from .connection.state import StateManager
+from .connection.tasks import TaskDispatcher # Import TaskDispatcher
 
 TAG = __name__
 
@@ -66,6 +67,9 @@ class ConnectionHandler:
         self.tts_queue = queue.Queue()
         self.audio_play_queue = queue.Queue()
         self.executor = ThreadPoolExecutor(max_workers=10)
+
+        # Instantiate TaskDispatcher
+        self.dispatcher = TaskDispatcher(self.loop, self.executor, self.tts_queue, self.audio_play_queue)
 
         # 依赖的组件
         self.vad = _vad
@@ -163,8 +167,10 @@ class ConnectionHandler:
                     )
                     # Keep using default LLM/TTS, private_config might still be useful for prompts etc.
 
-            # 异步初始化
-            self.executor.submit(self._initialize_components)
+            # 异步初始化 - 使用 TaskDispatcher
+            # self.executor.submit(self._initialize_components)
+            self.dispatcher.dispatch_plugin_task(self._initialize_components)
+
             # tts 消化线程
             self.tts_priority_thread = threading.Thread(
                 target=self._tts_priority_thread, daemon=True
@@ -297,7 +303,8 @@ class ConnectionHandler:
                 text = f"请在后台输入验证码：{' '.join(auth_code)}"
                 self.recode_first_last_text(text)
                 future = self.executor.submit(self.speak_and_play, text)
-                self.tts_queue.put(future)
+                # self.tts_queue.put(future)
+                self.dispatcher.dispatch_tts(future)
             return False
         return True
 
@@ -372,7 +379,8 @@ class ConnectionHandler:
                     future = self.executor.submit(
                         self.speak_and_play, segment_text, text_index
                     )
-                    self.tts_queue.put(future)
+                    # self.tts_queue.put(future)
+                    self.dispatcher.dispatch_tts(future)
                     processed_chars += len(segment_text_raw)  # 更新已处理字符位置
 
         # 处理最后剩余的文本
@@ -386,7 +394,8 @@ class ConnectionHandler:
                 future = self.executor.submit(
                     self.speak_and_play, segment_text, text_index
                 )
-                self.tts_queue.put(future)
+                # self.tts_queue.put(future)
+                self.dispatcher.dispatch_tts(future)
 
         self.llm_finish_task = True
         self.dialogue.put(Message(role="assistant", content="".join(response_message)))
@@ -503,7 +512,8 @@ class ConnectionHandler:
                             future = self.executor.submit(
                                 self.speak_and_play, segment_text, text_index
                             )
-                            self.tts_queue.put(future)
+                            # self.tts_queue.put(future)
+                            self.dispatcher.dispatch_tts(future)
                             # 更新已处理字符位置
                             processed_chars += len(segment_text_raw)
 
@@ -564,7 +574,8 @@ class ConnectionHandler:
                 future = self.executor.submit(
                     self.speak_and_play, segment_text, text_index
                 )
-                self.tts_queue.put(future)
+                # self.tts_queue.put(future)
+                self.dispatcher.dispatch_tts(future)
 
         # 存储对话内容
         if len(response_message) > 0:
@@ -626,7 +637,8 @@ class ConnectionHandler:
             text = result.response
             self.recode_first_last_text(text, text_index)
             future = self.executor.submit(self.speak_and_play, text, text_index)
-            self.tts_queue.put(future)
+            # self.tts_queue.put(future)
+            self.dispatcher.dispatch_tts(future)
             self.dialogue.put(Message(role="assistant", content=text))
         elif result.action == Action.REQLLM:  # 调用函数后再请求llm生成回复
 
@@ -660,13 +672,15 @@ class ConnectionHandler:
             text = result.result
             self.recode_first_last_text(text, text_index)
             future = self.executor.submit(self.speak_and_play, text, text_index)
-            self.tts_queue.put(future)
+            # self.tts_queue.put(future)
+            self.dispatcher.dispatch_tts(future)
             self.dialogue.put(Message(role="assistant", content=text))
         else:
             text = result.result
             self.recode_first_last_text(text, text_index)
             future = self.executor.submit(self.speak_and_play, text, text_index)
-            self.tts_queue.put(future)
+            # self.tts_queue.put(future)
+            self.dispatcher.dispatch_tts(future)
             self.dialogue.put(Message(role="assistant", content=text))
 
     def _tts_priority_thread(self):
@@ -712,7 +726,8 @@ class ConnectionHandler:
                             # Check client_abort *before* putting into queue
                             if not self.client_abort:
                                 self.logger.bind(tag=TAG).debug(f"准备将 MP3 数据放入播放队列, 索引: {text_index}")
-                                self.audio_play_queue.put((mp3_data, text, text_index, 'mp3'))
+                                # self.audio_play_queue.put((mp3_data, text, text_index, 'mp3'))
+                                self.dispatcher.dispatch_audio((mp3_data, text, text_index, 'mp3'))
                                 self.logger.bind(tag=TAG).debug(f"MP3数据已放入播放队列, 索引: {text_index}, 队列大小: {self.audio_play_queue.qsize()}")
                             else:
                                 self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送MP3数据, 索引: {text_index}")
@@ -748,7 +763,8 @@ class ConnectionHandler:
                                 if not self.client_abort:
                                     self.logger.bind(tag=TAG).debug(f"准备将带长度信息的 Opus Blob 放入播放队列, 索引: {text_index}")
                                     # Put (blob_with_len, text, text_index, type) into queue
-                                    self.audio_play_queue.put((bytes(opus_blob_with_len), text, text_index, 'opus_blob'))
+                                    # self.audio_play_queue.put((bytes(opus_blob_with_len), text, text_index, 'opus_blob'))
+                                    self.dispatcher.dispatch_audio((bytes(opus_blob_with_len), text, text_index, 'opus_blob'))
                                     self.logger.bind(tag=TAG).debug(f"带长度信息的 Opus Blob 已放入播放队列, 索引: {text_index}, 队列大小: {self.audio_play_queue.qsize()}")
                                 else:
                                     self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送带长度信息的 Opus Blob 数据, 索引: {text_index}")
@@ -878,15 +894,21 @@ class ConnectionHandler:
                         # Determine which future timed out if possible (more complex)
                         self.logger.bind(tag=TAG).error(f"[MP3 Send {text_index}] Timeout waiting for send future: {e}")
                         # Attempt to cancel pending futures on timeout
-                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done():
+                            start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done():
+                            binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done():
+                            end_future.cancel()
                     except Exception as send_e:
                         self.logger.bind(tag=TAG).error(f"[MP3 Send {text_index}] Error during MP3 send sequence: {send_e}")
                         # Attempt to cancel pending futures on other errors
-                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done():
+                            start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done():
+                            binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done():
+                            end_future.cancel()
 
                 elif audio_type == 'opus_blob':
                     # --- Send Opus Blob (Now contains length-prefixed packets) ---
@@ -939,14 +961,20 @@ class ConnectionHandler:
 
                     except TimeoutError as e:
                         self.logger.bind(tag=TAG).error(f"[OpusBlob Send {text_index}] Timeout waiting for send future: {e}")
-                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done():
+                            start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done():
+                            binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done():
+                            end_future.cancel()
                     except Exception as send_e:
                         self.logger.bind(tag=TAG).error(f"[OpusBlob Send {text_index}] Error during Opus Blob send sequence: {send_e}")
-                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done():
+                            start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done():
+                            binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done():
+                            end_future.cancel()
 
                 else:
                      self.logger.bind(tag=TAG).error(f"音频播放队列中收到未知类型: {audio_type}, 索引: {text_index}")
@@ -1091,10 +1119,10 @@ class ConnectionHandler:
                             opus_packets, response_text, text_index = result
                             full_assistant_response += response_text
                             # Puts opus packets into audio_play_queue
-                            self.audio_play_queue.put((text_index, (opus_packets, response_text, text_index)))
+                            self.dispatcher.dispatch_audio((opus_packets, response_text, text_index, 'opus'))
                             self.logger.bind(tag=TAG).info(f"Put Opus packets for index {text_index} into play queue.")
                         else:
-                            self.logger.bind(tag=TAG).warning(f"TTS task completed but returned no result.")
+                            self.logger.bind(tag=TAG).warning("TTS task completed but returned no result.")
                     except Exception as e:
                         self.logger.bind(tag=TAG).error(f"Error processing completed TTS task: {e}", exc_info=True)
 

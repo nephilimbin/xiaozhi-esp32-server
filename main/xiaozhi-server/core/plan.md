@@ -34,7 +34,7 @@
     - **(调整)** 由于 `core/auth.py` 中已存在 `AuthMiddleware` 及其 `authenticate` 方法，此步骤主要是确认 `core/connection.py` 中调用该方法的逻辑是否正确和独立，为后续将其移入 `ConnectionManager` 做准备。检查点：是否可以通过传入 `AuthMiddleware` 实例和 `headers` 来完成认证？
     - **(原始计划的移动逻辑将在第 8 步完成)**: 将 `AuthMiddleware` 的实例化和调用逻辑移入 `ConnectionManager.__init__` 和 `ConnectionManager.manage_connection`。
 
-第 4 步：提取 StateManager
+第 4 步：提取 StateManager - **已完成**
 - 操作：
 - 在 `core/connection.py` 中找到负责在开始时加载连接特定状态的代码（例如 `await self.memory.load_memory(...)` 或 `await self.private_config.load_or_create()`)以及在结束时保存状态的代码（例如 `await self.memory.save_memory(...)`)。
 - 移动 加载逻辑到 `core/state.py` 中 `StateManager` 的 `async load(self, connection_id)` 方法。
@@ -44,10 +44,10 @@
 - 理由： 隔离状态持久化逻辑。
 - 测试： 连接，进行交互（会修改状态），然后断开连接。重新连接并检查之前的状态是否已正确加载/持久化。
 
-第 5 步：提取 TaskDispatcher
+第 5 步：提取 TaskDispatcher - **已完成**
 - 操作：
-- 在 `core/connection.py` 中识别将任务放入 `TTS_Queue`、`Audio_Queue` 或提交给 `ThreadPoolExecutor` 的地方。
-- 在 `core/tasks.py` 中实现 `TaskDispatcher`。它可能需要在初始化时访问队列、执行器和主事件循环（通过参数传入）。创建如下方法：
+- 在 `core/connection.py` (实际为 `core/connection_handler.py`) 中识别将任务放入 `TTS_Queue`、`Audio_Queue` 或提交给 `ThreadPoolExecutor` 的地方。
+- 在 `core/tasks.py` (实际为 `core/connection/tasks.py`) 中实现 `TaskDispatcher`。它可能需要在初始化时访问队列、执行器和主事件循环（通过参数传入）。创建如下方法：
 - dispatch_tts(self, text): 包含 `self.tts_queue.put_nowait(text)` 逻辑。
 - dispatch_audio(self, audio_data): 包含 `self.audio_play_queue.put_nowait(audio_data)` 逻辑。
 - async dispatch_plugin_task(self, func, *args): 包含 `self.loop.run_in_executor(self.executor, func, *args)` 逻辑。

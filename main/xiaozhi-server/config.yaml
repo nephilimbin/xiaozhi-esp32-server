@@ -53,7 +53,7 @@ enable_stop_tts_notify: false
 stop_tts_notify_voice: 'config/assets/tts_notify.mp3'
 
 # 设置TTS输出格式，可选值为 'mp3_file' 或 'opus_stream'【测试】
-tts_output_format: 'opus_stream' # 可选值为 'mp3_file' 或 'opus_stream'
+tts_output_format: 'mp3_file' # 可选值为 'mp3_file' 或 'opus_stream'
 
 CMD_exit:
   - '退出'
