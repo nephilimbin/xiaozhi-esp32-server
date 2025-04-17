@@ -705,12 +705,15 @@ class ConnectionHandler:
                     if tts_output_format == 'mp3_file':
                         self.logger.bind(tag=TAG).debug(f"配置为发送MP3文件，准备读取: {tts_file}")
                         try:
+                            self.logger.bind(tag=TAG).debug(f"尝试读取 MP3 文件: {tts_file}")
                             with open(tts_file, 'rb') as f:
                                 mp3_data = f.read()
+                            self.logger.bind(tag=TAG).debug(f"MP3 文件读取成功, 大小: {len(mp3_data)} bytes")
                             # Check client_abort *before* putting into queue
                             if not self.client_abort:
+                                self.logger.bind(tag=TAG).debug(f"准备将 MP3 数据放入播放队列, 索引: {text_index}")
                                 self.audio_play_queue.put((mp3_data, text, text_index, 'mp3'))
-                                self.logger.bind(tag=TAG).debug(f"MP3数据已放入播放队列, 索引: {text_index}, 大小: {len(mp3_data)} bytes")
+                                self.logger.bind(tag=TAG).debug(f"MP3数据已放入播放队列, 索引: {text_index}, 队列大小: {self.audio_play_queue.qsize()}")
                             else:
                                 self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送MP3数据, 索引: {text_index}")
                         except Exception as e:
@@ -720,16 +723,35 @@ class ConnectionHandler:
                     else:
                         if tts_output_format != 'opus_stream':
                              self.logger.bind(tag=TAG).warning(f"未知的 tts_output_format 配置: {tts_output_format}, 使用 opus_stream 处理")
-                        self.logger.bind(tag=TAG).debug(f"配置为发送Opus流，准备转换: {tts_file}")
+                        self.logger.bind(tag=TAG).debug(f"配置为发送带长度信息的Opus Blob，准备转换: {tts_file}")
                         try:
                             opus_datas, duration = self.tts.audio_to_opus_data(tts_file)
                             if opus_datas:
+                                # --- Create Opus Blob with Length Prefix for each packet ---
+                                opus_blob_with_len = bytearray()
+                                for packet in opus_datas:
+                                    packet_len = len(packet)
+                                    if packet_len == 0:
+                                        continue # Skip empty packets if any
+                                    if packet_len > 65535:
+                                        self.logger.bind(tag=TAG).error(f"Opus 包过大 ({packet_len} bytes)，无法用2字节表示长度. 跳过此包.")
+                                        continue
+                                    # Prepend 2-byte length (little-endian)
+                                    opus_blob_with_len.extend(packet_len.to_bytes(2, 'little'))
+                                    # Append packet data
+                                    opus_blob_with_len.extend(packet)
+                                
+                                self.logger.bind(tag=TAG).debug(f"Opus数据包已带长度信息连接成Blob, 总大小: {len(opus_blob_with_len)} bytes")
+                                # -----------------------------------------------------------
+
                                 # Check client_abort *before* putting into queue
                                 if not self.client_abort:
-                                    self.audio_play_queue.put((opus_datas, text, text_index, 'opus'))
-                                    self.logger.bind(tag=TAG).debug(f"Opus数据包已放入播放队列, 索引: {text_index}, 包数量: {len(opus_datas)}")
+                                    self.logger.bind(tag=TAG).debug(f"准备将带长度信息的 Opus Blob 放入播放队列, 索引: {text_index}")
+                                    # Put (blob_with_len, text, text_index, type) into queue
+                                    self.audio_play_queue.put((bytes(opus_blob_with_len), text, text_index, 'opus_blob'))
+                                    self.logger.bind(tag=TAG).debug(f"带长度信息的 Opus Blob 已放入播放队列, 索引: {text_index}, 队列大小: {self.audio_play_queue.qsize()}")
                                 else:
-                                    self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送Opus数据, 索引: {text_index}")
+                                    self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送带长度信息的 Opus Blob 数据, 索引: {text_index}")
                             else:
                                 self.logger.bind(tag=TAG).error(f"Opus转换失败或返回空数据: {tts_file}")
                         except Exception as e:
@@ -774,7 +796,9 @@ class ConnectionHandler:
             try:
                 try:
                     # Now receiving (data, text, text_index, type)
+                    self.logger.bind(tag=TAG).debug(f"音频播放线程尝试从队列获取数据... 队列大小: {self.audio_play_queue.qsize()}")
                     data, text, text_index, audio_type = self.audio_play_queue.get(timeout=1)
+                    self.logger.bind(tag=TAG).debug(f"音频播放线程成功获取到数据, 类型: {audio_type}, 索引: {text_index}")
                 except queue.Empty:
                     if self.stop_event.is_set():
                         break
@@ -814,26 +838,115 @@ class ConnectionHandler:
                     }
 
                     try:
-                        # Send start message
-                        asyncio.run_coroutine_threadsafe(
+                        self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Scheduling sends...")
+
+                        # Schedule start message
+                        start_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_message(start_msg), self.loop
-                        ).result()
-                        self.logger.bind(tag=TAG).debug(f"已发送MP3开始信号, 索引: {text_index}")
+                        )
 
-                        # Send MP3 binary data
-                        # Use the send_bytes method for binary data
-                        asyncio.run_coroutine_threadsafe(
+                        # Schedule binary data
+                        # Add a small delay *before* scheduling the binary send to potentially allow
+                        # the event loop to process the start message send first.
+                        time.sleep(0.01) # Small sleep in the worker thread
+                        binary_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_bytes(mp3_binary_data), self.loop
-                        ).result()
-                        self.logger.bind(tag=TAG).debug(f"已发送MP3二进制数据, 索引: {text_index}")
+                        )
 
-                        # Send end message
-                        asyncio.run_coroutine_threadsafe(
+                        # Schedule end message
+                        # Add another small delay
+                        time.sleep(0.01)
+                        end_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_message(end_msg), self.loop
-                        ).result()
-                        self.logger.bind(tag=TAG).debug(f"已发送MP3结束信号, 索引: {text_index}")
+                        )
+
+                        self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Sends scheduled. Waiting for results...")
+
+                        # Wait for results with timeout
+                        start_future.result(timeout=5) # Short timeout for control messages
+                        self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Start signal future completed.")
+
+                        binary_future.result(timeout=10) # Longer timeout for binary data
+                        self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Binary data future completed.")
+
+                        end_future.result(timeout=5) # Short timeout for control messages
+                        self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] End signal future completed.")
+
+                        self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] All MP3 sends completed successfully.")
+
+                    except TimeoutError as e:
+                        # Determine which future timed out if possible (more complex)
+                        self.logger.bind(tag=TAG).error(f"[MP3 Send {text_index}] Timeout waiting for send future: {e}")
+                        # Attempt to cancel pending futures on timeout
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
                     except Exception as send_e:
-                         self.logger.bind(tag=TAG).error(f"发送MP3消息时出错 (索引 {text_index}): {send_e}")
+                        self.logger.bind(tag=TAG).error(f"[MP3 Send {text_index}] Error during MP3 send sequence: {send_e}")
+                        # Attempt to cancel pending futures on other errors
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+
+                elif audio_type == 'opus_blob':
+                    # --- Send Opus Blob (Now contains length-prefixed packets) ---
+                    opus_blob_data = data # data is the blob with length-prefixed packets
+                    self.logger.bind(tag=TAG).debug(f"准备发送带长度信息的Opus Blob, 索引: {text_index}, 大小: {len(opus_blob_data)} bytes")
+
+                    start_msg = {
+                        "type": "tts_opus_blob", # New type
+                        "state": "start",
+                        "text": text,
+                        "session_id": self.session_id,
+                        "index": text_index
+                    }
+                    end_msg = {
+                        "type": "tts_opus_blob", # New type
+                        "state": "end",
+                        "session_id": self.session_id,
+                        "index": text_index
+                    }
+
+                    try:
+                        self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Scheduling sends...")
+
+                        # Schedule start message
+                        start_future = asyncio.run_coroutine_threadsafe(
+                            self.channel.send_message(start_msg), self.loop
+                        )
+                        # Schedule binary data (Opus Blob)
+                        time.sleep(0.01)
+                        binary_future = asyncio.run_coroutine_threadsafe(
+                            self.channel.send_bytes(opus_blob_data), self.loop
+                        )
+                        # Schedule end message
+                        time.sleep(0.01)
+                        end_future = asyncio.run_coroutine_threadsafe(
+                            self.channel.send_message(end_msg), self.loop
+                        )
+
+                        self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Sends scheduled. Waiting for results...")
+
+                        # Wait for results with timeout
+                        start_future.result(timeout=5)
+                        self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Start signal future completed.")
+                        binary_future.result(timeout=10)
+                        self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Binary data future completed.")
+                        end_future.result(timeout=5)
+                        self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] End signal future completed.")
+
+                        self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] All Opus Blob sends completed successfully.")
+
+                    except TimeoutError as e:
+                        self.logger.bind(tag=TAG).error(f"[OpusBlob Send {text_index}] Timeout waiting for send future: {e}")
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+                    except Exception as send_e:
+                        self.logger.bind(tag=TAG).error(f"[OpusBlob Send {text_index}] Error during Opus Blob send sequence: {send_e}")
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
 
                 else:
                      self.logger.bind(tag=TAG).error(f"音频播放队列中收到未知类型: {audio_type}, 索引: {text_index}")

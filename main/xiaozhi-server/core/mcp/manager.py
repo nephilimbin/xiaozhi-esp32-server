@@ -61,7 +61,7 @@ class MCPManager:
                     self.conn.func_handler.function_registry.register_function(func_name)
 
             except Exception as e:
-                self.logger.bind(tag=TAG).error(f"Failed to initialize MCP server {name}: {e}")
+                self.logger.bind(tag=TAG).exception(f"Failed to initialize MCP server {name}: {e}")
         self.conn.func_handler.upload_functions_desc()
 
     def get_all_tools(self) -> List[Dict[str, Any]]:
@@ -106,5 +106,5 @@ class MCPManager:
                 await client.cleanup()
                 self.logger.bind(tag=TAG).info(f"Cleaned up MCP client: {name}")
             except Exception as e:
-                self.logger.bind(tag=TAG).error(f"Error cleaning up MCP client {name}: {e}")
+                self.logger.bind(tag=TAG).exception(f"Error cleaning up MCP client {name}: {e}")
         self.client.clear()
