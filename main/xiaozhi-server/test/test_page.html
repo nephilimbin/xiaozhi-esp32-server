@@ -597,36 +597,31 @@
         let isRecording = false;
         let visualizerCanvas = document.getElementById('audioVisualizer');
         let visualizerContext = visualizerCanvas.getContext('2d');
+        let audioQueue = [];
+        let isPlaying = false;
         let opusDecoder = null; // Opus解码器
-        let opusEncoder = null; // Opus编码器 (from later code)
         let visualizationRequest = null; // 动画帧请求ID
 
-        // 音频流缓冲相关 (Opus + MP3)
+        // 音频流缓冲相关
+        let audioBuffers = []; // 用于存储接收到的所有音频数据
+        let totalAudioSize = 0; // 跟踪累积的音频大小
+
         let audioBufferQueue = [];     // 存储接收到的 Opus 音频包
-        let mp3BufferQueue = [];       // 新增：存储接收到的 MP3 音频包
+        let mp3BufferQueue = [];       // 新增: 用于存储 MP3 数据块
         let isAudioBuffering = false;  // 是否正在缓冲音频
-        let isAudioPlaying = false;    // 是否正在播放音频 (replaces old isPlaying)
-        let expectedAudioFormat = 'opus'; // 新增：期望的音频格式 ('opus' or 'mp3')
-        let audioPlaybackElement = null; // 新增：用于播放 MP3 的 <audio> 元素
-        let bufferingTimer = null;       // 新增：缓冲超时计时器
-        const BUFFERING_TIMEOUT = 1000;  // 新增：缓冲超时时间 (ms)
-        const MIN_BUFFER_PACKETS = 1; // 新增：开始播放的最小包数
+        let isAudioPlaying = false;    // 是否正在播放音频
+        let expectedAudioFormat = 'opus'; // 新增: 'opus' 或 'mp3'
+        let audioPlaybackElement = null; // 新增: 用于播放 MP3 的 <audio> 元素
+        const BUFFERING_TIMEOUT = 1000; // 缓冲超时时间 (ms)
+        const MIN_BUFFER_PACKETS = 1; // 最小缓冲包数
+        let bufferingTimer = null;
+
+        const BUFFER_THRESHOLD = 3;    // 缓冲包数量阈值，至少累积3个包再开始播放
         const MIN_AUDIO_DURATION = 0.1; // 最小音频长度(秒)，小于这个长度的音频会被合并
-        let streamingContext = { // Modified slightly for Opus playback
-            sourceNode: null,
-            startTime: 0,
-            processedDuration: 0,
-            endOfStream: false
-        };
+        let streamingContext = null;   // 音频流上下文
         const SAMPLE_RATE = 16000;     // 采样率
         const CHANNELS = 1;            // 声道数
-        const opusFrameSize = 960; // 60ms @ 16kHz for encoding
-
-        // PCM Recording related (from later code)
-        let audioProcessor = null;
-        let audioProcessorType = null;
-        let audioSource = null;
-        let pcmDataBuffer = new Int16Array();
+        const FRAME_SIZE = 960;        // 帧大小
 
         // DOM元素
         const connectButton = document.getElementById('connectButton');
@@ -716,175 +711,188 @@
             conversationDiv.scrollTop = conversationDiv.scrollHeight;
         }
 
-        // 开始音频缓冲过程
+
+        // 开始音频缓冲过程 - 修改以处理两种格式
         function startAudioBuffering() {
             if (isAudioBuffering || isAudioPlaying) return;
 
             isAudioBuffering = true;
-            log("开始音频缓冲...", 'info');
+            log(`开始 ${expectedAudioFormat.toUpperCase()} 音频缓冲...`, 'info');
 
-            clearTimeout(bufferingTimer); // Clear any previous timer
+            // 确保 Opus 解码器初始化 (如果需要)
+            if (expectedAudioFormat === 'opus') {
+                initOpusDecoder().catch(error => {
+                    log(`预初始化 Opus 解码器失败: ${error.message}`, 'warning');
+                });
+            }
+
+            clearTimeout(bufferingTimer); // 清除旧计时器
             bufferingTimer = setTimeout(() => {
-                log(`缓冲超时，当前缓冲包数: ${expectedAudioFormat === 'mp3' ? mp3BufferQueue.length : audioBufferQueue.length}，开始播放`, 'warning');
-                isAudioBuffering = false;
-                if (expectedAudioFormat === 'mp3') {
-                    playBufferedMp3();
-                } else {
-                    playBufferedAudio(); // Play whatever Opus we have
+                const currentBufferLength = (expectedAudioFormat === 'mp3') ? mp3BufferQueue.length : audioBufferQueue.length;
+                if (isAudioBuffering && currentBufferLength >= MIN_BUFFER_PACKETS) { // Ensure at least MIN packets
+                    log(`缓冲超时或达到最小包数，缓冲包数: ${currentBufferLength}，尝试播放`, 'warning');
+                    isAudioBuffering = false; // Stop buffering state
+                    if (expectedAudioFormat === 'mp3') {
+                        log('调用 playBufferedMp3 (来自缓冲超时/最小包数)', 'debug');
+                        playBufferedMp3();
+                    } else {
+                        log('调用 playBufferedAudio (来自缓冲超时/最小包数)', 'debug');
+                        playBufferedAudio(); // 播放已有的 Opus 数据
+                    }
+                } else if (isAudioBuffering) {
+                    log(`缓冲超时但数据包不足 (${currentBufferLength} < ${MIN_BUFFER_PACKETS}) 或无数据，取消播放`, 'warning');
+                    isAudioBuffering = false; // Stop buffering state anyway
                 }
             }, BUFFERING_TIMEOUT);
+
+            // 监控缓冲进度 - 简单起见，可以在超时后直接播放，或者按需添加更复杂的阈值检查
+            // 如果需要达到一定包数才播放，可以在这里添加检查逻辑
         }
 
-        // 播放已缓冲的音频
-        function playBufferedAudio() { // Renamed slightly implicitly to clarify it's for Opus
+        // 播放已缓冲的 Opus 音频 (基本保持不变，但确保在结束后重置格式)
+        function playBufferedAudio() {
             if (isAudioPlaying || audioBufferQueue.length === 0) {
-                clearTimeout(bufferingTimer); // Stop buffering timer if playback starts
+                clearTimeout(bufferingTimer);
                 isAudioBuffering = false;
                 return;
             }
 
-            clearTimeout(bufferingTimer); // Stop buffering timer
+            clearTimeout(bufferingTimer);
             isAudioBuffering = false;
             isAudioPlaying = true;
-            streamingContext.endOfStream = false; // Reset end of stream flag
             log(`开始播放缓冲的 Opus 音频 (${audioBufferQueue.length} 包)`, 'info');
 
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-            }
-            if (!opusDecoder) {
-                log('Opus解码器未初始化', 'error');
-                isAudioPlaying = false;
-                expectedAudioFormat = 'opus'; // Reset format on error
-                return;
-            }
-
-            let sourceNode = audioContext.createBufferSource();
-            streamingContext.sourceNode = sourceNode;
-            streamingContext.startTime = audioContext.currentTime;
-            streamingContext.processedDuration = 0;
-
-            const processQueue = () => {
-                if (audioBufferQueue.length === 0 && !streamingContext.endOfStream) {
-                    // Buffer ran out, wait for more data or end signal
-                    setTimeout(processQueue, 50); // Check again shortly
-                    return;
-                }
-
-                if (audioBufferQueue.length > 0) {
-                    const opusPacket = audioBufferQueue.shift();
-                    try {
-                        const decodedPcm = opusDecoder.decode(opusPacket); // Decode Int16 PCM
-                        if (decodedPcm && decodedPcm.length > 0) {
-                            // Convert Int16 PCM to Float32 for Web Audio API
-                            const float32Pcm = new Float32Array(decodedPcm.length);
-                            for (let i = 0; i < decodedPcm.length; i++) {
-                                float32Pcm[i] = decodedPcm[i] / 32768.0;
-                            }
-
-                            const audioBuffer = audioContext.createBuffer(1, float32Pcm.length, sampleRate);
-                            audioBuffer.copyToChannel(float32Pcm, 0);
-
-                            sourceNode = audioContext.createBufferSource();
-                            sourceNode.buffer = audioBuffer;
-                            sourceNode.connect(audioContext.destination);
-
-                            const offset = streamingContext.processedDuration;
-                            const startAt = streamingContext.startTime + offset;
-
-                            sourceNode.start(startAt);
-                            streamingContext.processedDuration += audioBuffer.duration;
-
-                            // Schedule the next chunk
-                            sourceNode.onended = () => {
-                                if (!streamingContext.endOfStream || audioBufferQueue.length > 0) {
-                                    processQueue();
-                                } else {
-                                    log('Opus 音频播放结束', 'info');
-                                    isAudioPlaying = false;
-                                    expectedAudioFormat = 'opus'; // Reset format
-                                }
-                            };
-                        } else {
-                            log('Opus解码产生空数据', 'warning');
-                            // If decoding fails or gives empty data, continue processing queue
-                            if (!streamingContext.endOfStream || audioBufferQueue.length > 0) {
-                                processQueue();
-                            } else {
-                                log('Opus 音频播放结束 (解码空数据)', 'info');
-                                isAudioPlaying = false;
-                                expectedAudioFormat = 'opus'; // Reset format
-                            }
-                        }
-                    } catch (error) {
-                        log(`Opus解码错误: ${error.message}`, 'error');
-                        // Skip this packet and try the next one
-                        if (!streamingContext.endOfStream || audioBufferQueue.length > 0) {
-                            processQueue();
-                        } else {
-                            log('Opus 音频播放结束 (解码错误)', 'info');
-                            isAudioPlaying = false;
-                            expectedAudioFormat = 'opus'; // Reset format
+            const initDecoderAndPlay = async () => {
+                try {
+                    if (!audioContext) {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                            sampleRate: SAMPLE_RATE
+                        });
+                    }
+                    if (!opusDecoder) {
+                        log('初始化Opus解码器...', 'info');
+                        opusDecoder = await initOpusDecoder();
+                        if (!opusDecoder) throw new Error('解码器初始化失败');
+                        log('Opus解码器初始化成功', 'success');
+                    } else {
+                        // 如果解码器已存在，确保它已初始化
+                        if (!opusDecoder.decoderPtr && !opusDecoder.init()) {
+                            throw new Error('无法重新初始化解码器');
                         }
                     }
-                } else if (streamingContext.endOfStream) {
-                    // End of stream and queue is empty
-                    log('Opus 音频流结束，队列已空', 'info');
+
+                    // 注意: 原来的 streamingContext 逻辑可能过于复杂，这里简化处理
+                    // 我们将所有缓冲的 Opus 包解码并连接起来播放
+                    let allPcmData = [];
+                    while (audioBufferQueue.length > 0) {
+                        const opusPacket = audioBufferQueue.shift();
+                        try {
+                            const decodedPcm = opusDecoder.decode(opusPacket);
+                            if (decodedPcm && decodedPcm.length > 0) {
+                                const floatData = convertInt16ToFloat32(decodedPcm);
+                                allPcmData.push(...floatData);
+                            }
+                        } catch (decodeError) {
+                            log(`Opus 解码失败: ${decodeError.message}`, 'error');
+                        }
+                    }
+
+                    if (allPcmData.length === 0) {
+                        log('没有成功解码的 Opus 样本', 'warning');
+                        isAudioPlaying = false;
+                        expectedAudioFormat = 'opus'; // 重置状态
+                        return;
+                    }
+
+                    const audioBuffer = audioContext.createBuffer(CHANNELS, allPcmData.length, SAMPLE_RATE);
+                    audioBuffer.copyToChannel(new Float32Array(allPcmData), 0);
+
+                    const source = audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(audioContext.destination);
+                    source.onended = () => {
+                        log('Opus 音频播放结束', 'info');
+                        isAudioPlaying = false;
+                        expectedAudioFormat = 'opus'; // 重置状态
+                        // streamingContext = null; // 如果不再需要复杂流式处理
+                    };
+                    source.start();
+                    log(`开始播放解码后的 ${allPcmData.length} 个 Opus 样本`, 'debug');
+
+                } catch (error) {
+                    log(`播放缓冲的 Opus 音频出错: ${error.message}`, 'error');
                     isAudioPlaying = false;
-                    expectedAudioFormat = 'opus'; // Reset format
+                    expectedAudioFormat = 'opus'; // 重置状态
+                    audioBufferQueue = []; // 清空可能有问题的缓冲
                 }
             };
 
-            processQueue();
+            initDecoderAndPlay();
         }
 
-        // New function to play buffered MP3 data
+        // 新增: 播放缓冲的 MP3 数据
         function playBufferedMp3() {
+            log("进入 playBufferedMp3 函数", 'debug'); // 确认函数被调用
             if (isAudioPlaying || mp3BufferQueue.length === 0) {
-                clearTimeout(bufferingTimer); // Stop buffering timer if playback starts
+                log(`playBufferedMp3 条件不满足: isAudioPlaying=${isAudioPlaying}, mp3BufferQueue.length=${mp3BufferQueue.length}`, 'debug');
+                clearTimeout(bufferingTimer);
                 isAudioBuffering = false;
                 return;
             }
 
-            clearTimeout(bufferingTimer); // Stop buffering timer
+            clearTimeout(bufferingTimer);
             isAudioBuffering = false;
             isAudioPlaying = true;
             log(`开始播放缓冲的 MP3 音频 (${mp3BufferQueue.length} 包)`, 'info');
 
             try {
-                // Concatenate all MP3 chunks into a single Blob
+                // 将所有 MP3 数据块合并成一个 Blob
                 const mp3Blob = new Blob(mp3BufferQueue, { type: 'audio/mpeg' });
                 const mp3Url = URL.createObjectURL(mp3Blob);
+                log(`创建 MP3 Blob URL: ${mp3Url}, 大小: ${(mp3Blob.size / 1024).toFixed(2)} KB`, 'debug');
 
-                // Use an <audio> element for playback
-                if (!audioPlaybackElement) {
-                    audioPlaybackElement = new Audio();
-                    audioPlaybackElement.addEventListener('ended', () => {
-                        log('MP3 音频播放结束', 'info');
-                        URL.revokeObjectURL(mp3Url); // Clean up Blob URL
-                        isAudioPlaying = false;
-                        mp3BufferQueue = []; // Clear buffer after playing
-                        expectedAudioFormat = 'opus'; // Reset format after MP3 playback
-                        audioPlaybackElement = null; // Remove element or reuse
-                    });
-                    audioPlaybackElement.addEventListener('error', (e) => {
-                        log(`MP3 播放错误: ${e.target.error.message}`, 'error');
-                        URL.revokeObjectURL(mp3Url); // Clean up Blob URL
-                        isAudioPlaying = false;
-                        mp3BufferQueue = [];
-                        expectedAudioFormat = 'opus';
-                        audioPlaybackElement = null;
-                    });
+                // 使用 <audio> 元素播放
+                if (audioPlaybackElement) {
+                    // 如果元素已存在，先移除旧的事件监听器
+                    audioPlaybackElement.removeEventListener('ended', onMp3Ended);
+                    audioPlaybackElement.removeEventListener('error', onMp3Error);
                 }
+                audioPlaybackElement = new Audio();
+
+                const onMp3Ended = () => {
+                    log('MP3 音频播放结束', 'info');
+                    URL.revokeObjectURL(mp3Url);
+                    isAudioPlaying = false;
+                    mp3BufferQueue = [];
+                    expectedAudioFormat = 'opus'; // 播放完毕，重置回 Opus
+                    audioPlaybackElement = null;
+                };
+                const onMp3Error = (e) => {
+                    log(`MP3 播放错误: ${e.target.error ? e.target.error.message : '未知错误'}`, 'error');
+                    URL.revokeObjectURL(mp3Url);
+                    isAudioPlaying = false;
+                    mp3BufferQueue = [];
+                    expectedAudioFormat = 'opus'; // 出错也重置
+                    audioPlaybackElement = null;
+                };
+
+                audioPlaybackElement.addEventListener('ended', onMp3Ended);
+                audioPlaybackElement.addEventListener('error', onMp3Error);
 
                 audioPlaybackElement.src = mp3Url;
-                audioPlaybackElement.play();
+                log("尝试调用 audioPlaybackElement.play()", 'debug');
+                audioPlaybackElement.play().then(() => {
+                    log("audioPlaybackElement.play() 调用成功", 'debug');
+                }).catch(e => {
+                    log(`调用 play() 出错: ${e.message}`, 'error');
+                    onMp3Error({ target: { error: e } }); // 手动触发错误处理
+                });
 
             } catch (error) {
                 log(`创建或播放 MP3 Blob 时出错: ${error.message}`, 'error');
                 isAudioPlaying = false;
-                mp3BufferQueue = []; // Clear buffer on error
-                expectedAudioFormat = 'opus'; // Reset format
+                mp3BufferQueue = [];
+                expectedAudioFormat = 'opus'; // 出错也重置
             }
         }
 
@@ -920,7 +928,7 @@
                 opusDecoder = {
                     channels: CHANNELS,
                     rate: SAMPLE_RATE,
-                    frameSize: opusFrameSize,
+                    frameSize: FRAME_SIZE,
                     module: mod,
                     decoderPtr: null, // 初始为null
 
@@ -1396,73 +1404,111 @@
                     connectionStatus.style.color = 'red';
                 };
 
-                websocket.onmessage = function (event) {
+                // 修改 onmessage 处理逻辑
+                websocket.onmessage = async function (event) { // 添加 async 关键字
                     try {
-                        // 检查是否为文本消息
                         if (typeof event.data === 'string') {
                             const message = JSON.parse(event.data);
+                            log(`收到文本消息: ${JSON.stringify(message)}`, 'debug');
+                            // addMessage(message.text || JSON.stringify(message), 'server'); // 避免重复添加消息
 
-                            if (message.type === 'hello') {
-                                log(`服务器回应：${JSON.stringify(message, null, 2)}`, 'success');
-                            } else if (message.type === 'tts') {
-                                // TTS状态消息
-                                if (message.state === 'start') {
+                            // 处理不同消息类型
+                            switch (message.type) {
+                                case 'hello':
+                                    log(`服务器回应：${JSON.stringify(message, null, 2)}`, 'success');
+                                    break;
+                                case 'reply':
+                                case 'llm': // 假设 'llm' 类型后也跟 Opus 音频
+                                    log(`大模型回复: ${message.text || '(无文本)'}`, 'info');
+                                    addMessage(message.text || '(收到回复，无文本)', false);
+                                    expectedAudioFormat = 'opus'; // 确认接下来是 Opus
+                                    audioBufferQueue = []; // 清空旧 Opus 缓冲
+                                    mp3BufferQueue = [];   // 清空 MP3 缓冲
+                                    break;
+                                case 'tts_start': // 服务器明确开始 TTS
                                     log('服务器开始发送语音', 'info');
-                                } else if (message.state === 'sentence_start') {
-                                    log(`服务器发送语音段: ${message.text}`, 'info');
-                                    // 添加文本到会话记录
+                                    if (message.format && message.format === 'mp3') {
+                                        expectedAudioFormat = 'mp3';
+                                        log('期望音频格式: MP3', 'info');
+                                        mp3BufferQueue = []; // 清空 MP3 缓冲
+                                    } else {
+                                        expectedAudioFormat = 'opus';
+                                        log('期望音频格式: Opus', 'info');
+                                        audioBufferQueue = []; // 清空 Opus 缓冲
+                                    }
+                                    break;
+                                case 'tts_mp3': // 处理特定的 tts_mp3 文本指令
+                                    log('收到 tts_mp3 指令，准备接收 MP3 数据', 'info');
+                                    // 修改：仅当 message.text 存在时才添加到会话记录
                                     if (message.text) {
-                                        addMessage(message.text);
+                                        addMessage(message.text, false);
                                     }
-                                } else if (message.state === 'sentence_end') {
-                                    log(`语音段结束: ${message.text}`, 'info');
-                                } else if (message.state === 'stop') {
-                                    log('服务器语音传输结束', 'info');
-                                    // 结束后更新UI状态
-                                    if (recordButton.disabled) {
-                                        recordButton.disabled = false;
-                                        recordButton.textContent = '开始录音';
-                                        recordButton.classList.remove('recording');
+                                    if (expectedAudioFormat !== 'mp3') {
+                                        expectedAudioFormat = 'mp3';
+                                        // 清空缓冲仅在格式切换时执行一次
+                                        mp3BufferQueue = [];
+                                        audioBufferQueue = [];
+                                        log('切换到 MP3 模式，清空缓冲区', 'debug');
+                                    } else {
+                                        log('已处于 MP3 模式，忽略重复的 tts_mp3 文本指令', 'debug');
                                     }
-                                }
-                            } else if (message.type === 'audio') {
-                                // 音频控制消息
-                                log(`收到音频控制消息: ${JSON.stringify(message)}`, 'info');
-                            } else if (message.type === 'stt') {
-                                // 语音识别结果
-                                log(`识别结果: ${message.text}`, 'info');
-                                // 添加识别结果到会话记录
-                                addMessage(`[语音识别] ${message.text}`, true);
-                            } else if (message.type === 'llm') {
-                                // 大模型回复
-                                log(`大模型回复: ${message.text}`, 'info');
-                                // 添加大模型回复到会话记录
-                                if (message.text && message.text !== '😊') {
-                                    addMessage(message.text);
-                                }
-                            } else {
-                                // 未知消息类型
-                                log(`未知消息类型: ${message.type}`, 'info');
-                                addMessage(JSON.stringify(message, null, 2));
+                                    break;
+                                case 'tts': // 处理通用的 tts 状态消息
+                                    log(`TTS状态: ${message.state}, 文本: ${message.text || ''}`, 'info');
+                                    if (message.state === 'sentence_start' && message.text) {
+                                        addMessage(message.text, false);
+                                    } else if (message.state === 'stop') {
+                                        // 如果是 Opus 格式且正在播放，可能需要在这里触发结束
+                                        if (expectedAudioFormat === 'opus' && isAudioPlaying && streamingContext) {
+                                            // streamingContext.endOfStream = true; // 简化后的播放逻辑可能不需要这个
+                                        } else if (expectedAudioFormat === 'mp3' && mp3BufferQueue.length > 0 && !isAudioPlaying) {
+                                            // 如果是 MP3 且有缓冲但未播放，TTS stop 时播放剩余部分
+                                            playBufferedMp3();
+                                        }
+                                    }
+                                    break;
+                                case 'ping':
+                                    const pongMessage = { type: 'pong' };
+                                    websocket.send(JSON.stringify(pongMessage));
+                                    log('发送 Pong', 'debug');
+                                    break;
+                                case 'error':
+                                    log(`服务器错误: ${message.message}`, 'error');
+                                    break;
+                                case 'ack':
+                                    log(`收到确认: ${JSON.stringify(message.payload)}`, 'debug');
+                                    break;
+                                case 'listen_result':
+                                case 'stt': // 统一处理语音识别结果
+                                    log(`识别结果: ${message.text}`, 'info');
+                                    addMessage(`[语音识别] ${message.text}`, true); // 标记为用户侧
+                                    break;
+                                // ... 其他 case ...
+                                default:
+                                    log(`未知文本消息类型: ${message.type}`, 'warning');
+                                    addMessage(JSON.stringify(message, null, 2), false);
                             }
+                        } else if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+                            // 处理二进制数据 (音频)
+                            await handleBinaryMessage(event.data);
                         } else {
-                            // 处理二进制数据 - 兼容多种二进制格式
-                            handleBinaryMessage(event.data);
+                            log(`收到未知格式数据: ${typeof event.data}`, 'warning');
                         }
                     } catch (error) {
                         log(`WebSocket消息处理错误: ${error.message}`, 'error');
-                        // 非JSON格式文本消息直接显示
                         if (typeof event.data === 'string') {
-                            addMessage(event.data);
+                            addMessage(`[原始文本] ${event.data}`, false);
                         }
                     }
                 };
 
                 connectionStatus.textContent = 'ws未连接';
-                connectionStatus.style.color = 'orange';
+                connectionStatus.style.color = 'orange'; // 原代码是 ws未连接？这里可能逻辑有点问题
+
             } catch (error) {
                 log(`连接错误: ${error.message}`, 'error');
                 connectionStatus.textContent = 'ws未连接';
+                connectionStatus.style.color = 'red';
             }
         }
 
@@ -1725,6 +1771,7 @@
         }
 
         // 使用libopus创建一个Opus编码器
+        let opusEncoder = null;
         function initOpusEncoder() {
             try {
                 if (opusEncoder) {
@@ -1746,7 +1793,7 @@
                 opusEncoder = {
                     channels: channels,
                     sampleRate: sampleRate,
-                    frameSize: opusFrameSize, // 60ms @ 16kHz = 60 * 16 = 960 samples
+                    frameSize: 960, // 60ms @ 16kHz = 60 * 16 = 960 samples
                     maxPacketSize: 4000, // 最大包大小
                     module: mod,
 
@@ -1883,6 +1930,7 @@
             }).catch(error => {
                 log(`Opus解码器预加载失败: ${error.message}，将在需要时重试`, 'warning');
             });
+            log('应用初始化完成', 'success');
         }
 
         // PCM录音处理器代码 - 会被注入到AudioWorklet中
@@ -2046,12 +2094,12 @@
         }
 
         // 初始化直接从PCM数据录音的系统
-        // let audioProcessor = null; // Keep global declaration
-        // let audioProcessorType = null; // Keep global declaration
-        // let audioSource = null; // Keep global declaration
+        let audioProcessor = null;
+        let audioProcessorType = null;
+        let audioSource = null;
 
         // 处理PCM缓冲数据
-        // let pcmDataBuffer = new Int16Array(); // Keep global declaration
+        let pcmDataBuffer = new Int16Array();
         function processPCMBuffer(buffer) {
             if (!isRecording) return;
 
@@ -2089,7 +2137,7 @@
 
                     if (opusData && opusData.length > 0) {
                         // 存储音频帧
-                        audioBufferQueue.push(opusData.buffer);
+                        audioBuffers.push(opusData.buffer);
                         totalAudioSize += opusData.length;
 
                         // 如果WebSocket已连接，则发送数据
@@ -2299,233 +2347,87 @@
         async function handleBinaryMessage(data) {
             try {
                 let arrayBuffer;
-
-                // 根据数据类型进行处理
                 if (data instanceof ArrayBuffer) {
                     arrayBuffer = data;
-                    // log(`收到ArrayBuffer音频数据，大小: ${data.byteLength}字节`, 'debug');
                 } else if (data instanceof Blob) {
                     arrayBuffer = await data.arrayBuffer();
-                    // log(`收到Blob音频数据，大小: ${arrayBuffer.byteLength}字节`, 'debug');
                 } else {
                     log(`收到未知类型的二进制数据: ${typeof data}`, 'warning');
                     return;
                 }
 
                 const binaryData = new Uint8Array(arrayBuffer);
-                log(`收到 ${expectedAudioFormat.toUpperCase()} 音频数据，大小: ${binaryData.length}字节`, 'debug');
+                // log(`收到 ${expectedAudioFormat.toUpperCase()} 音频数据，大小: ${binaryData.length}字节`, 'debug'); // Reduce log verbosity
 
                 if (binaryData.length > 0) {
                     if (expectedAudioFormat === 'opus') {
-                        // Handle Opus data
                         audioBufferQueue.push(binaryData);
                         if (audioBufferQueue.length === 1 && !isAudioBuffering && !isAudioPlaying) {
-                            startAudioBuffering(); // Start buffering for Opus
+                            startAudioBuffering();
                         }
+                        // 注释掉: 避免过于频繁地检查，依赖超时或结束信号
+                        // else if (isAudioBuffering && audioBufferQueue.length >= MIN_BUFFER_PACKETS) {
+                        //    playBufferedAudio();
+                        // }
                     } else if (expectedAudioFormat === 'mp3') {
-                        // Handle MP3 data
                         mp3BufferQueue.push(binaryData);
                         if (mp3BufferQueue.length === 1 && !isAudioBuffering && !isAudioPlaying) {
-                            startAudioBuffering(); // Start buffering for MP3
+                            startAudioBuffering(); // 开始缓冲计时
                         }
+                        // 注释掉: 避免过于频繁地检查，依赖超时或结束信号
+                        // else if (isAudioBuffering && mp3BufferQueue.length >= MIN_BUFFER_PACKETS) {
+                        //    playBufferedMp3();
+                        // }
                     }
-                } else {
-                    log(`收到空 ${expectedAudioFormat.toUpperCase()} 数据帧，可能是结束标志`, 'warning');
+                } else { // 收到空数据帧 (结束标志)
+                    log(`收到空 ${expectedAudioFormat.toUpperCase()} 数据帧，结束标志`, 'info');
+                    clearTimeout(bufferingTimer); // 清除缓冲超时
+                    isAudioBuffering = false;
 
                     if (expectedAudioFormat === 'opus') {
-                        // End of Opus stream
                         if (audioBufferQueue.length > 0 && !isAudioPlaying) {
-                            playBufferedAudio(); // Play remaining Opus
-                        }
-                        if (isAudioPlaying && streamingContext) {
-                            streamingContext.endOfStream = true;
+                            log('调用 playBufferedAudio (来自空帧结束信号)', 'debug');
+                            playBufferedAudio(); // 播放剩余 Opus
                         }
                     } else if (expectedAudioFormat === 'mp3') {
-                        // End of MP3 stream
                         if (mp3BufferQueue.length > 0 && !isAudioPlaying) {
-                            playBufferedMp3(); // Play buffered MP3
+                            log('调用 playBufferedMp3 (来自空帧结束信号)', 'debug');
+                            playBufferedMp3(); // 播放剩余 MP3
                         }
-                        // No specific end-of-stream needed for blob playback? Or handled in playBufferedMp3
                     }
-                    // Reset format after stream ends? Maybe do this in playback functions.
-                    // expectedAudioFormat = 'opus';
                 }
             } catch (error) {
                 log(`处理二进制消息出错: ${error.message}`, 'error');
             }
         }
 
-        // ... existing code ...
-
-        function startAudioBuffering() {
-            if (isAudioBuffering || isAudioPlaying) return;
-
-            isAudioBuffering = true;
-            log('开始音频缓冲...', 'info');
-
-            clearTimeout(bufferingTimer); // Clear any previous timer
-            bufferingTimer = setTimeout(() => {
-                log(`缓冲超时，当前缓冲包数: ${expectedAudioFormat === 'mp3' ? mp3BufferQueue.length : audioBufferQueue.length}，开始播放`, 'warning');
-                isAudioBuffering = false;
-                if (expectedAudioFormat === 'mp3') {
-                    playBufferedMp3();
-                } else {
-                    playBufferedAudio(); // Play whatever Opus we have
-                }
-            }, BUFFERING_TIMEOUT);
-        }
-
-        function playBufferedAudio() { // Renamed slightly implicitly to clarify it's for Opus
-            if (isAudioPlaying || audioBufferQueue.length === 0) {
-                clearTimeout(bufferingTimer); // Stop buffering timer if playback starts
-                isAudioBuffering = false;
-                return;
-            }
-
-            clearTimeout(bufferingTimer); // Stop buffering timer
-            isAudioBuffering = false;
-            isAudioPlaying = true;
-            streamingContext.endOfStream = false; // Reset end of stream flag
-            log(`开始播放缓冲的 Opus 音频 (${audioBufferQueue.length} 包)`, 'info');
-
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-            }
-            if (!opusDecoder) {
-                log('Opus解码器未初始化', 'error');
-                isAudioPlaying = false;
-                expectedAudioFormat = 'opus'; // Reset format on error
-                return;
-            }
-
-            let sourceNode = audioContext.createBufferSource();
-            streamingContext.sourceNode = sourceNode;
-            streamingContext.startTime = audioContext.currentTime;
-            streamingContext.processedDuration = 0;
-
-            const processQueue = () => {
-                if (audioBufferQueue.length === 0 && !streamingContext.endOfStream) {
-                    // Buffer ran out, wait for more data or end signal
-                    setTimeout(processQueue, 50); // Check again shortly
-                    return;
-                }
-
-                if (audioBufferQueue.length > 0) {
-                    const opusPacket = audioBufferQueue.shift();
-                    try {
-                        const decodedPcm = opusDecoder.decode(opusPacket); // Decode Int16 PCM
-                        if (decodedPcm && decodedPcm.length > 0) {
-                            // Convert Int16 PCM to Float32 for Web Audio API
-                            const float32Pcm = new Float32Array(decodedPcm.length);
-                            for (let i = 0; i < decodedPcm.length; i++) {
-                                float32Pcm[i] = decodedPcm[i] / 32768.0;
-                            }
-
-                            const audioBuffer = audioContext.createBuffer(1, float32Pcm.length, sampleRate);
-                            audioBuffer.copyToChannel(float32Pcm, 0);
-
-                            sourceNode = audioContext.createBufferSource();
-                            sourceNode.buffer = audioBuffer;
-                            sourceNode.connect(audioContext.destination);
-
-                            const offset = streamingContext.processedDuration;
-                            const startAt = streamingContext.startTime + offset;
-
-                            sourceNode.start(startAt);
-                            streamingContext.processedDuration += audioBuffer.duration;
-
-                            // Schedule the next chunk
-                            sourceNode.onended = () => {
-                                if (!streamingContext.endOfStream || audioBufferQueue.length > 0) {
-                                    processQueue();
-                                } else {
-                                    log('Opus 音频播放结束', 'info');
-                                    isAudioPlaying = false;
-                                    expectedAudioFormat = 'opus'; // Reset format
-                                }
-                            };
-                        } else {
-                            log('Opus解码产生空数据', 'warning');
-                            // If decoding fails or gives empty data, continue processing queue
-                            if (!streamingContext.endOfStream || audioBufferQueue.length > 0) {
-                                processQueue();
-                            } else {
-                                log('Opus 音频播放结束 (解码空数据)', 'info');
-                                isAudioPlaying = false;
-                                expectedAudioFormat = 'opus'; // Reset format
-                            }
-                        }
-                    } catch (error) {
-                        log(`Opus解码错误: ${error.message}`, 'error');
-                        // Skip this packet and try the next one
-                        if (!streamingContext.endOfStream || audioBufferQueue.length > 0) {
-                            processQueue();
-                        } else {
-                            log('Opus 音频播放结束 (解码错误)', 'info');
-                            isAudioPlaying = false;
-                            expectedAudioFormat = 'opus'; // Reset format
-                        }
-                    }
-                } else if (streamingContext.endOfStream) {
-                    // End of stream and queue is empty
-                    log('Opus 音频流结束，队列已空', 'info');
-                    isAudioPlaying = false;
-                    expectedAudioFormat = 'opus'; // Reset format
-                }
+        // 获取配置值
+        function getConfig() {
+            const deviceMac = document.getElementById('deviceMac').value.trim();
+            return {
+                deviceId: deviceMac,  // 使用MAC地址作为deviceId
+                deviceName: document.getElementById('deviceName').value.trim(),
+                deviceMac: deviceMac,
+                clientId: document.getElementById('clientId').value.trim(),
+                token: document.getElementById('token').value.trim()
             };
-
-            processQueue();
         }
 
-        // New function to play buffered MP3 data
-        function playBufferedMp3() {
-            if (isAudioPlaying || mp3BufferQueue.length === 0) {
-                clearTimeout(bufferingTimer); // Stop buffering timer if playback starts
-                isAudioBuffering = false;
-                return;
+        // 验证配置
+        function validateConfig(config) {
+            if (!config.deviceMac) {
+                log('设备MAC地址不能为空', 'error');
+                return false;
             }
-
-            clearTimeout(bufferingTimer); // Stop buffering timer
-            isAudioBuffering = false;
-            isAudioPlaying = true;
-            log(`开始播放缓冲的 MP3 音频 (${mp3BufferQueue.length} 包)`, 'info');
-
-            try {
-                // Concatenate all MP3 chunks into a single Blob
-                const mp3Blob = new Blob(mp3BufferQueue, { type: 'audio/mpeg' });
-                const mp3Url = URL.createObjectURL(mp3Blob);
-
-                // Use an <audio> element for playback
-                if (!audioPlaybackElement) {
-                    audioPlaybackElement = new Audio();
-                    audioPlaybackElement.addEventListener('ended', () => {
-                        log('MP3 音频播放结束', 'info');
-                        URL.revokeObjectURL(mp3Url); // Clean up Blob URL
-                        isAudioPlaying = false;
-                        mp3BufferQueue = []; // Clear buffer after playing
-                        expectedAudioFormat = 'opus'; // Reset format after MP3 playback
-                        audioPlaybackElement = null; // Remove element or reuse
-                    });
-                    audioPlaybackElement.addEventListener('error', (e) => {
-                        log(`MP3 播放错误: ${e.target.error.message}`, 'error');
-                        URL.revokeObjectURL(mp3Url); // Clean up Blob URL
-                        isAudioPlaying = false;
-                        mp3BufferQueue = [];
-                        expectedAudioFormat = 'opus';
-                        audioPlaybackElement = null;
-                    });
-                }
-
-                audioPlaybackElement.src = mp3Url;
-                audioPlaybackElement.play();
-
-            } catch (error) {
-                log(`创建或播放 MP3 Blob 时出错: ${error.message}`, 'error');
-                isAudioPlaying = false;
-                mp3BufferQueue = []; // Clear buffer on error
-                expectedAudioFormat = 'opus'; // Reset format
+            if (!config.clientId) {
+                log('客户端ID不能为空', 'error');
+                return false;
             }
+            return true;
         }
 
+        initApp();
+    </script>
+</body>
 
-        // ... existing code ...
+</html>

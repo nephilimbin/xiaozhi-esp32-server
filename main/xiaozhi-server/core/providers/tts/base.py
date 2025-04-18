@@ -6,6 +6,8 @@ import opuslib_next
 from pydub import AudioSegment
 from abc import ABC, abstractmethod
 from core.utils.tts import MarkdownCleaner
+import random
+import time
 
 TAG = __name__
 logger = setup_logging()
@@ -25,18 +27,33 @@ class TTSProviderBase(ABC):
         try:
             max_repeat_time = 5
             text = MarkdownCleaner.clean_markdown(text)
-            while not os.path.exists(tmp_file) and max_repeat_time > 0:
+            attempts = 0
+            while not os.path.exists(tmp_file) and attempts < max_repeat_time:
+                attempts += 1
+                sleep_time = random.uniform(0.1, 0.2)
+                logger.bind(tag=TAG).debug(f"等待 {sleep_time:.2f} 秒后尝试生成 TTS...")
+                time.sleep(sleep_time)
+
                 asyncio.run(self.text_to_speak(text, tmp_file))
                 if not os.path.exists(tmp_file):
-                    max_repeat_time = max_repeat_time - 1
-                    logger.bind(tag=TAG).error(f"语音生成失败: {text}:{tmp_file}，再试{max_repeat_time}次")
+                    logger.bind(tag=TAG).error(f"语音生成失败: {text}:{tmp_file}，剩余尝试次数 {max_repeat_time - attempts}")
+                else:
+                    break
 
-            if max_repeat_time > 0:
-                logger.bind(tag=TAG).info(f"语音生成成功: {text}:{tmp_file}，重试{5 - max_repeat_time}次")
+            if os.path.exists(tmp_file):
+                logger.bind(tag=TAG).info(f"语音生成成功: {text}:{tmp_file}，尝试 {attempts} 次")
+                return tmp_file
+            else:
+                logger.bind(tag=TAG).error(f"语音生成失败，已达到最大重试次数: {text}:{tmp_file}")
+                return None
 
-            return tmp_file
         except Exception as e:
-            logger.bind(tag=TAG).error(f"Failed to generate TTS file: {e}")
+            logger.bind(tag=TAG).error(f"生成 TTS 文件时发生异常: {e}")
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except OSError as oe:
+                    logger.bind(tag=TAG).error(f"删除异常 TTS 文件 {tmp_file} 失败: {oe}")
             return None
 
     @abstractmethod
