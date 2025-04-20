@@ -375,13 +375,19 @@ class ConnectionHandler:
                     # if text_index % 2 == 0:
                     #     segment_text = " "
                     text_index += 1
+                    self.logger.bind(tag=TAG).debug(f"[chat] Found segment [{text_index}]: '{segment_text}'")
                     self.recode_first_last_text(segment_text, text_index)
-                    future = self.executor.submit(
-                        self.speak_and_play, segment_text, text_index
-                    )
-                    # self.tts_queue.put(future)
-                    self.dispatcher.dispatch_tts(future)
-                    processed_chars += len(segment_text_raw)  # 更新已处理字符位置
+                    try:
+                        self.logger.bind(tag=TAG).debug(f"[chat] Submitting TTS task for index {text_index}...")
+                        future = self.executor.submit(
+                            self.speak_and_play, segment_text, text_index
+                        )
+                        self.logger.bind(tag=TAG).debug(f"[chat] Submitting future for index {text_index} to dispatcher...")
+                        self.dispatcher.dispatch_tts(future)
+                        self.logger.bind(tag=TAG).debug(f"[chat] Dispatched TTS future for index {text_index}.")
+                        processed_chars += len(segment_text_raw)
+                    except Exception as e:
+                         self.logger.bind(tag=TAG).error(f"[chat] Error submitting/dispatching TTS task for index {text_index}: {e}", exc_info=True)
 
         # 处理最后剩余的文本
         full_text = "".join(response_message)
@@ -390,12 +396,18 @@ class ConnectionHandler:
             segment_text = get_string_no_punctuation_or_emoji(remaining_text)
             if segment_text:
                 text_index += 1
+                self.logger.bind(tag=TAG).debug(f"[chat] Found final segment [{text_index}]: '{segment_text}'")
                 self.recode_first_last_text(segment_text, text_index)
-                future = self.executor.submit(
-                    self.speak_and_play, segment_text, text_index
-                )
-                # self.tts_queue.put(future)
-                self.dispatcher.dispatch_tts(future)
+                try:
+                    self.logger.bind(tag=TAG).debug(f"[chat] Submitting final TTS task for index {text_index}...")
+                    future = self.executor.submit(
+                        self.speak_and_play, segment_text, text_index
+                    )
+                    self.logger.bind(tag=TAG).debug(f"[chat] Submitting final future for index {text_index} to dispatcher...")
+                    self.dispatcher.dispatch_tts(future)
+                    self.logger.bind(tag=TAG).debug(f"[chat] Dispatched final TTS future for index {text_index}.")
+                except Exception as e:
+                     self.logger.bind(tag=TAG).error(f"[chat] Error submitting/dispatching final TTS task for index {text_index}: {e}", exc_info=True)
 
         self.llm_finish_task = True
         self.dialogue.put(Message(role="assistant", content="".join(response_message)))
@@ -508,14 +520,20 @@ class ConnectionHandler:
                         )
                         if segment_text:
                             text_index += 1
+                            self.logger.bind(tag=TAG).debug(f"[fc_chat] Found segment [{text_index}]: '{segment_text}'")
                             self.recode_first_last_text(segment_text, text_index)
-                            future = self.executor.submit(
-                                self.speak_and_play, segment_text, text_index
-                            )
-                            # self.tts_queue.put(future)
-                            self.dispatcher.dispatch_tts(future)
-                            # 更新已处理字符位置
-                            processed_chars += len(segment_text_raw)
+                            try:
+                                self.logger.bind(tag=TAG).debug(f"[fc_chat] Submitting TTS task for index {text_index}...")
+                                future = self.executor.submit(
+                                    self.speak_and_play, segment_text, text_index
+                                )
+                                self.logger.bind(tag=TAG).debug(f"[fc_chat] Submitting future for index {text_index} to dispatcher...")
+                                self.dispatcher.dispatch_tts(future)
+                                self.logger.bind(tag=TAG).debug(f"[fc_chat] Dispatched TTS future for index {text_index}.")
+                                # 更新已处理字符位置
+                                processed_chars += len(segment_text_raw)
+                            except Exception as e:
+                                self.logger.bind(tag=TAG).error(f"[fc_chat] Error submitting/dispatching TTS task for index {text_index}: {e}", exc_info=True)
 
         # 处理function call
         if tool_call_flag:
@@ -570,12 +588,18 @@ class ConnectionHandler:
             segment_text = get_string_no_punctuation_or_emoji(remaining_text)
             if segment_text:
                 text_index += 1
+                self.logger.bind(tag=TAG).debug(f"[fc_chat] Found final segment [{text_index}]: '{segment_text}'")
                 self.recode_first_last_text(segment_text, text_index)
-                future = self.executor.submit(
-                    self.speak_and_play, segment_text, text_index
-                )
-                # self.tts_queue.put(future)
-                self.dispatcher.dispatch_tts(future)
+                try:
+                    self.logger.bind(tag=TAG).debug(f"[fc_chat] Submitting final TTS task for index {text_index}...")
+                    future = self.executor.submit(
+                        self.speak_and_play, segment_text, text_index
+                    )
+                    self.logger.bind(tag=TAG).debug(f"[fc_chat] Submitting final future for index {text_index} to dispatcher...")
+                    self.dispatcher.dispatch_tts(future)
+                    self.logger.bind(tag=TAG).debug(f"[fc_chat] Dispatched final TTS future for index {text_index}.")
+                except Exception as e:
+                    self.logger.bind(tag=TAG).error(f"[fc_chat] Error submitting/dispatching final TTS task for index {text_index}: {e}", exc_info=True)
 
         # 存储对话内容
         if len(response_message) > 0:
@@ -717,61 +741,46 @@ class ConnectionHandler:
                     tts_output_format = self.config.get('tts_output_format', 'opus_stream')
 
                     if tts_output_format == 'mp3_file':
+                        # --- MP3 File Handling (Keep As Is) ---
                         self.logger.bind(tag=TAG).debug(f"配置为发送MP3文件，准备读取: {tts_file}")
                         try:
                             self.logger.bind(tag=TAG).debug(f"尝试读取 MP3 文件: {tts_file}")
                             with open(tts_file, 'rb') as f:
                                 mp3_data = f.read()
                             self.logger.bind(tag=TAG).debug(f"MP3 文件读取成功, 大小: {len(mp3_data)} bytes")
-                            # Check client_abort *before* putting into queue
                             if not self.client_abort:
                                 self.logger.bind(tag=TAG).debug(f"准备将 MP3 数据放入播放队列, 索引: {text_index}")
-                                # self.audio_play_queue.put((mp3_data, text, text_index, 'mp3'))
                                 self.dispatcher.dispatch_audio((mp3_data, text, text_index, 'mp3'))
                                 self.logger.bind(tag=TAG).debug(f"MP3数据已放入播放队列, 索引: {text_index}, 队列大小: {self.audio_play_queue.qsize()}")
                             else:
                                 self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送MP3数据, 索引: {text_index}")
                         except Exception as e:
                             self.logger.bind(tag=TAG).error(f"读取MP3文件失败 {tts_file}: {e}")
+                        # --- End MP3 File Handling ---
 
                     # Default to opus_stream if format is 'opus_stream' or unknown/not 'mp3_file'
                     else:
+                        # --- Opus Stream Handling (Modify to match connection.py) ---
                         if tts_output_format != 'opus_stream':
                              self.logger.bind(tag=TAG).warning(f"未知的 tts_output_format 配置: {tts_output_format}, 使用 opus_stream 处理")
-                        self.logger.bind(tag=TAG).debug(f"配置为发送带长度信息的Opus Blob，准备转换: {tts_file}")
+                        self.logger.bind(tag=TAG).debug(f"配置为发送Opus流，准备转换: {tts_file}")
                         try:
+                            # Get list of opus packets
                             opus_datas, duration = self.tts.audio_to_opus_data(tts_file)
                             if opus_datas:
-                                # --- Create Opus Blob with Length Prefix for each packet ---
-                                opus_blob_with_len = bytearray()
-                                for packet in opus_datas:
-                                    packet_len = len(packet)
-                                    if packet_len == 0:
-                                        continue # Skip empty packets if any
-                                    if packet_len > 65535:
-                                        self.logger.bind(tag=TAG).error(f"Opus 包过大 ({packet_len} bytes)，无法用2字节表示长度. 跳过此包.")
-                                        continue
-                                    # Prepend 2-byte length (little-endian)
-                                    opus_blob_with_len.extend(packet_len.to_bytes(2, 'little'))
-                                    # Append packet data
-                                    opus_blob_with_len.extend(packet)
-                                
-                                self.logger.bind(tag=TAG).debug(f"Opus数据包已带长度信息连接成Blob, 总大小: {len(opus_blob_with_len)} bytes")
-                                # -----------------------------------------------------------
-
-                                # Check client_abort *before* putting into queue
+                                self.logger.bind(tag=TAG).debug(f"Opus转换成功，得到 {len(opus_datas)} 个数据包")
                                 if not self.client_abort:
-                                    self.logger.bind(tag=TAG).debug(f"准备将带长度信息的 Opus Blob 放入播放队列, 索引: {text_index}")
-                                    # Put (blob_with_len, text, text_index, type) into queue
-                                    # self.audio_play_queue.put((bytes(opus_blob_with_len), text, text_index, 'opus_blob'))
-                                    self.dispatcher.dispatch_audio((bytes(opus_blob_with_len), text, text_index, 'opus_blob'))
-                                    self.logger.bind(tag=TAG).debug(f"带长度信息的 Opus Blob 已放入播放队列, 索引: {text_index}, 队列大小: {self.audio_play_queue.qsize()}")
+                                    self.logger.bind(tag=TAG).debug(f"准备将 Opus 数据包列表放入播放队列, 索引: {text_index}")
+                                    # Put the LIST of opus packets into the queue
+                                    self.dispatcher.dispatch_audio((opus_datas, text, text_index, 'opus'))
+                                    self.logger.bind(tag=TAG).debug(f"Opus 数据包列表已放入播放队列, 索引: {text_index}, 队列大小: {self.audio_play_queue.qsize()}")
                                 else:
-                                    self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送带长度信息的 Opus Blob 数据, 索引: {text_index}")
+                                    self.logger.bind(tag=TAG).info(f"客户端已中断，跳过发送 Opus 数据, 索引: {text_index}")
                             else:
-                                self.logger.bind(tag=TAG).error(f"Opus转换失败或返回空数据: {tts_file}")
+                                self.logger.bind(tag=TAG).error(f"Opus转换失败或返回空数据包列表: {tts_file}")
                         except Exception as e:
-                            self.logger.bind(tag=TAG).error(f"Opus转换失败 {tts_file}: {e}")
+                            self.logger.bind(tag=TAG).error(f"Opus转换失败 {tts_file}: {e}", exc_info=True)
+                        # --- End Opus Stream Handling ---
                     # --- End of MP3/Opus Handling Logic ---
 
                 except TimeoutError:
@@ -824,18 +833,28 @@ class ConnectionHandler:
                     self.logger.bind(tag=TAG).warning("音频播放线程: 通信通道未就绪，跳过发送")
                     continue
 
+                # --- Audio Type Handling ---
                 if audio_type == 'opus':
-                    # --- Send Opus Stream ---
-                    self.logger.bind(tag=TAG).debug(f"发送Opus流, 索引: {text_index}, 包数量: {len(data)}")
-                    # Ensure data is the list of opus packets
+                    # --- Send Opus Stream (Now receives a LIST of packets) ---
+                    opus_packet_list = data # 'data' is now the list of opus packets
+                    packet_count = len(opus_packet_list) if isinstance(opus_packet_list, list) else 'N/A (不是列表)'
+                    self.logger.bind(tag=TAG).debug(f"发送Opus流 (包列表), 索引: {text_index}, 包数量: {packet_count}")
+                    # sendAudioMessage 应该处理流式发送
                     future = asyncio.run_coroutine_threadsafe(
-                        sendAudioMessage(self, data, text, text_index), self.loop
+                        sendAudioMessage(self, opus_packet_list, text, text_index), self.loop
                     )
-                    future.result() # Wait for completion
-                    self.logger.bind(tag=TAG).debug(f"Opus流发送完成, 索引: {text_index}")
+                    try:
+                        future.result(timeout=30) # 添加超时等待
+                        self.logger.bind(tag=TAG).debug(f"Opus流发送完成 (sendAudioMessage returned), 索引: {text_index}")
+                    except TimeoutError:
+                         self.logger.bind(tag=TAG).error(f"sendAudioMessage for Opus stream timed out, 索引: {text_index}")
+                         if not future.done():
+                            future.cancel()
+                    except Exception as send_exc:
+                        self.logger.bind(tag=TAG).error(f"sendAudioMessage for Opus stream failed, 索引: {text_index}: {send_exc}", exc_info=True)
 
                 elif audio_type == 'mp3':
-                    # --- Send MP3 File ---
+                    # --- Send MP3 File (Keep As Is) ---
                     mp3_binary_data = data # data is the mp3 bytes
                     self.logger.bind(tag=TAG).debug(f"准备发送MP3文件, 索引: {text_index}, 大小: {len(mp3_binary_data)} bytes")
 
@@ -855,63 +874,44 @@ class ConnectionHandler:
 
                     try:
                         self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Scheduling sends...")
-
                         # Schedule start message
                         start_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_message(start_msg), self.loop
                         )
-
                         # Schedule binary data
-                        # Add a small delay *before* scheduling the binary send to potentially allow
-                        # the event loop to process the start message send first.
-                        time.sleep(0.01) # Small sleep in the worker thread
+                        time.sleep(0.01)
                         binary_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_bytes(mp3_binary_data), self.loop
                         )
-
                         # Schedule end message
-                        # Add another small delay
                         time.sleep(0.01)
                         end_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_message(end_msg), self.loop
                         )
-
                         self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Sends scheduled. Waiting for results...")
 
-                        # Wait for results with timeout
-                        start_future.result(timeout=5) # Short timeout for control messages
+                        start_future.result(timeout=5)
                         self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Start signal future completed.")
-
-                        binary_future.result(timeout=10) # Longer timeout for binary data
+                        binary_future.result(timeout=10)
                         self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] Binary data future completed.")
-
-                        end_future.result(timeout=5) # Short timeout for control messages
+                        end_future.result(timeout=5)
                         self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] End signal future completed.")
-
                         self.logger.bind(tag=TAG).debug(f"[MP3 Send {text_index}] All MP3 sends completed successfully.")
 
                     except TimeoutError as e:
-                        # Determine which future timed out if possible (more complex)
                         self.logger.bind(tag=TAG).error(f"[MP3 Send {text_index}] Timeout waiting for send future: {e}")
-                        # Attempt to cancel pending futures on timeout
-                        if 'start_future' in locals() and not start_future.done():
-                            start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done():
-                            binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done():
-                            end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
                     except Exception as send_e:
                         self.logger.bind(tag=TAG).error(f"[MP3 Send {text_index}] Error during MP3 send sequence: {send_e}")
-                        # Attempt to cancel pending futures on other errors
-                        if 'start_future' in locals() and not start_future.done():
-                            start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done():
-                            binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done():
-                            end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+                    # --- End MP3 File Handling ---
 
                 elif audio_type == 'opus_blob':
-                    # --- Send Opus Blob (Now contains length-prefixed packets) ---
+                    # --- Send Opus Blob (Keep As Is, although likely unused by test_page.html) ---
                     opus_blob_data = data # data is the blob with length-prefixed packets
                     self.logger.bind(tag=TAG).debug(f"准备发送带长度信息的Opus Blob, 索引: {text_index}, 大小: {len(opus_blob_data)} bytes")
 
@@ -931,7 +931,6 @@ class ConnectionHandler:
 
                     try:
                         self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Scheduling sends...")
-
                         # Schedule start message
                         start_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_message(start_msg), self.loop
@@ -946,38 +945,31 @@ class ConnectionHandler:
                         end_future = asyncio.run_coroutine_threadsafe(
                             self.channel.send_message(end_msg), self.loop
                         )
-
                         self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Sends scheduled. Waiting for results...")
 
-                        # Wait for results with timeout
                         start_future.result(timeout=5)
                         self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Start signal future completed.")
                         binary_future.result(timeout=10)
                         self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] Binary data future completed.")
                         end_future.result(timeout=5)
                         self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] End signal future completed.")
-
                         self.logger.bind(tag=TAG).debug(f"[OpusBlob Send {text_index}] All Opus Blob sends completed successfully.")
 
                     except TimeoutError as e:
                         self.logger.bind(tag=TAG).error(f"[OpusBlob Send {text_index}] Timeout waiting for send future: {e}")
-                        if 'start_future' in locals() and not start_future.done():
-                            start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done():
-                            binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done():
-                            end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
                     except Exception as send_e:
                         self.logger.bind(tag=TAG).error(f"[OpusBlob Send {text_index}] Error during Opus Blob send sequence: {send_e}")
-                        if 'start_future' in locals() and not start_future.done():
-                            start_future.cancel()
-                        if 'binary_future' in locals() and not binary_future.done():
-                            binary_future.cancel()
-                        if 'end_future' in locals() and not end_future.done():
-                            end_future.cancel()
+                        if 'start_future' in locals() and not start_future.done(): start_future.cancel()
+                        if 'binary_future' in locals() and not binary_future.done(): binary_future.cancel()
+                        if 'end_future' in locals() and not end_future.done(): end_future.cancel()
+                    # --- End Opus Blob Handling ---
 
                 else:
                      self.logger.bind(tag=TAG).error(f"音频播放队列中收到未知类型: {audio_type}, 索引: {text_index}")
+                # --- End Audio Type Handling ---
 
             except Exception as e:
                 # Log general errors in the thread loop
@@ -990,10 +982,42 @@ class ConnectionHandler:
         if text is None or len(text) <= 0:
             self.logger.bind(tag=TAG).info(f"无需tts转换，query为空，{text}")
             return None, text, text_index
-        tts_file = self.tts.to_tts(text)
+        
+        tts_file = None
+        max_retries = self.config.get("tts_max_retries", 2)  # Default to 2 retries (3 attempts total)
+        retry_delay = self.config.get("tts_retry_delay_seconds", 0.5) # Default to 0.5 seconds
+
+        for attempt in range(max_retries + 1):
+            try:
+                self.logger.bind(tag=TAG).debug(f"[speak_and_play] Attempt {attempt + 1}/{max_retries + 1} for TTS index {text_index}...")
+                tts_file = self.tts.to_tts(text)
+                if tts_file is not None:
+                    self.logger.bind(tag=TAG).debug(f"[speak_and_play] TTS success on attempt {attempt + 1} for index {text_index}: {tts_file}")
+                    break # Success, exit loop
+                else:
+                    # Handle case where to_tts returns None without raising an exception (might indicate non-retryable issue)
+                    self.logger.bind(tag=TAG).error(f"[speak_and_play] TTS attempt {attempt + 1} returned None for index {text_index}, text: '{text}'")
+                    if attempt >= max_retries:
+                        self.logger.bind(tag=TAG).error(f"[speak_and_play] TTS failed after {max_retries + 1} attempts for index {text_index}, returning None.")
+                        return None, text, text_index # Return None after all retries if to_tts consistently returns None
+                    
+            except Exception as e:
+                self.logger.bind(tag=TAG).error(f"[speak_and_play] TTS attempt {attempt + 1} failed for index {text_index} with error: {e}", exc_info=True)
+                if attempt >= max_retries:
+                    self.logger.bind(tag=TAG).error(f"[speak_and_play] TTS failed after {max_retries + 1} attempts for index {text_index}, returning None.")
+                    return None, text, text_index # Return None after all retries
+            
+            # If not the last attempt, wait before retrying
+            if attempt < max_retries:
+                self.logger.bind(tag=TAG).warning(f"[speak_and_play] Waiting {retry_delay}s before retrying TTS for index {text_index}...")
+                time.sleep(retry_delay)
+
+        # If loop finished, tts_file should hold the successful result or None if all attempts failed
         if tts_file is None:
-            self.logger.bind(tag=TAG).error(f"tts转换失败，{text}")
-            return None, text, text_index
+             self.logger.bind(tag=TAG).error(f"[speak_and_play] All TTS attempts failed for index {text_index}, returning None file path.")
+             # Return None for the file path but keep text and index
+             return None, text, text_index 
+
         self.logger.bind(tag=TAG).debug(f"TTS 文件生成完毕: {tts_file}")
         return tts_file, text, text_index
 

@@ -58,8 +58,8 @@
 
 第 6 步：填充 MessageHandler 实现 (初步复制)
 - 操作：
-- 在 `core/handlers/context.py` 中定义 `HandlerContext` 类/数据类，用于保存 Handler 所需的依赖项（例如 `dispatcher`、`websocket_wrapper`、`state_manager`）。
-- 在 `core/connection.py` 中，找到 `_route_message`（或类似函数）内部处理文本消息的逻辑块。复制这整个逻辑块到 `core/handlers/text.py` 中 `TextMessageHandler` 的 `handle(self, message, context)` 方法内。你需要调整变量名以使用 `context` 对象（例如 `context.dispatcher.dispatch_tts(...), await context.websocket_wrapper.send_json(...)`)。
+- 在 `core/handlers/context.py` 中定义 `HandlerContext` 类/数据类，用于保存 Handler 所需的依赖项（例如 `dispatcher`、`WebSocketChannel`、`state_manager`）。
+- 在 `core/connection.py` 中，找到 `_route_message`（或类似函数）内部处理文本消息的逻辑块。复制这整个逻辑块到 `core/handlers/text.py` 中 `TextMessageHandler` 的 `handle(self, message, context)` 方法内。你需要调整变量名以使用 `context` 对象（例如 `context.dispatcher.dispatch_tts(...), await context.WebSocketChannel.send_json(...)`)。
 - 对处理音频消息的逻辑块执行相同操作，将其复制到 `core/handlers/audio.py` 的 `AudioMessageHandler.handle()` 中，并根据 `context` 进行调整。
 - 理由： 将核心处理逻辑移动到指定的 Handler 类中，即使最初只是复制粘贴。Handler 现在包含了如何做，但尚未集成到主流程中。
 - 测试： 此阶段无法进行功能测试，因为这些 Handler 尚未被调用。

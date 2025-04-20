@@ -25,36 +25,40 @@ class TTSProviderBase(ABC):
     def to_tts(self, text):
         tmp_file = self.generate_filename()
         try:
-            max_repeat_time = 5
             text = MarkdownCleaner.clean_markdown(text)
-            attempts = 0
-            while not os.path.exists(tmp_file) and attempts < max_repeat_time:
-                attempts += 1
-                sleep_time = random.uniform(0.1, 0.2)
-                logger.bind(tag=TAG).debug(f"等待 {sleep_time:.2f} 秒后尝试生成 TTS...")
-                time.sleep(sleep_time)
+            logger.bind(tag=TAG).debug(f"Attempting to generate TTS to {tmp_file} for text: '{text}'")
+            
+            # Directly call text_to_speak once. Retries are handled by the caller.
+            asyncio.run(self.text_to_speak(text, tmp_file))
 
-                asyncio.run(self.text_to_speak(text, tmp_file))
-                if not os.path.exists(tmp_file):
-                    logger.bind(tag=TAG).error(f"语音生成失败: {text}:{tmp_file}，剩余尝试次数 {max_repeat_time - attempts}")
-                else:
-                    break
-
+            # Check if file exists after the call
             if os.path.exists(tmp_file):
-                logger.bind(tag=TAG).info(f"语音生成成功: {text}:{tmp_file}，尝试 {attempts} 次")
-                return tmp_file
+                # Optional: Check file size > 0 if empty files are possible on success
+                if os.path.getsize(tmp_file) > 0:
+                    logger.bind(tag=TAG).info(f"TTS generation successful: {tmp_file}")
+                    return tmp_file
+                else:
+                    logger.bind(tag=TAG).error(f"TTS generated an empty file: {tmp_file} for text: '{text}'")
+                    # Attempt to remove the empty file
+                    try:
+                        os.remove(tmp_file)
+                    except OSError as oe:
+                        logger.bind(tag=TAG).error(f"Failed to remove empty TTS file {tmp_file}: {oe}")
+                    return None # Treat empty file as failure
             else:
-                logger.bind(tag=TAG).error(f"语音生成失败，已达到最大重试次数: {text}:{tmp_file}")
+                logger.bind(tag=TAG).error(f"TTS file not found after generation attempt: {tmp_file} for text: '{text}'")
                 return None
 
         except Exception as e:
-            logger.bind(tag=TAG).error(f"生成 TTS 文件时发生异常: {e}")
+            # Log the exception originating from text_to_speak (e.g., network timeout)
+            logger.bind(tag=TAG).error(f"Exception during TTS generation for {tmp_file}: {e}", exc_info=True)
+            # Attempt to clean up the possibly partially created file
             if os.path.exists(tmp_file):
                 try:
                     os.remove(tmp_file)
                 except OSError as oe:
-                    logger.bind(tag=TAG).error(f"删除异常 TTS 文件 {tmp_file} 失败: {oe}")
-            return None
+                    logger.bind(tag=TAG).error(f"Failed to remove failed TTS file {tmp_file}: {oe}")
+            return None # Signal failure to the caller
 
     @abstractmethod
     async def text_to_speak(self, text, output_file):
@@ -66,11 +70,23 @@ class TTSProviderBase(ABC):
         file_type = os.path.splitext(audio_file_path)[1]
         if file_type:
             file_type = file_type.lstrip('.')
-        # 读取音频文件，-nostdin 参数：不要从标准输入读取数据，否则FFmpeg会阻塞
-        audio = AudioSegment.from_file(audio_file_path, format=file_type, parameters=["-nostdin"])
+        
+        try:
+             # 读取音频文件，-nostdin 参数：不要从标准输入读取数据，否则FFmpeg会阻塞
+            audio = AudioSegment.from_file(audio_file_path, format=file_type, parameters=["-nostdin"])
+        except FileNotFoundError:
+            logger.bind(tag=TAG).error(f"Audio file not found for Opus conversion: {audio_file_path}")
+            return [], 0.0
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error reading audio file {audio_file_path}: {e}", exc_info=True)
+            return [], 0.0
 
         # 转换为单声道/16kHz采样率/16位小端编码（确保与编码器匹配）
-        audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+        try:
+            audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error processing audio segment for {audio_file_path}: {e}", exc_info=True)
+            return [], 0.0
 
         # 音频时长(秒)
         duration = len(audio) / 1000.0
@@ -78,28 +94,35 @@ class TTSProviderBase(ABC):
         # 获取原始PCM数据（16位小端）
         raw_data = audio.raw_data
 
-        # 初始化Opus编码器
-        encoder = opuslib_next.Encoder(16000, 1, opuslib_next.APPLICATION_AUDIO)
-
-        # 编码参数
-        frame_duration = 60  # 60ms per frame
-        frame_size = int(16000 * frame_duration / 1000)  # 960 samples/frame
-
         opus_datas = []
-        # 按帧处理所有音频数据（包括最后一帧可能补零）
-        for i in range(0, len(raw_data), frame_size * 2):  # 16bit=2bytes/sample
-            # 获取当前帧的二进制数据
-            chunk = raw_data[i:i + frame_size * 2]
+        try:
+            # 初始化Opus编码器
+            encoder = opuslib_next.Encoder(16000, 1, opuslib_next.APPLICATION_AUDIO)
 
-            # 如果最后一帧不足，补零
-            if len(chunk) < frame_size * 2:
-                chunk += b'\x00' * (frame_size * 2 - len(chunk))
+            # 编码参数
+            frame_duration = 60  # 60ms per frame
+            frame_size = int(16000 * frame_duration / 1000)  # 960 samples/frame
 
-            # 转换为numpy数组处理
-            np_frame = np.frombuffer(chunk, dtype=np.int16)
+            
+            # 按帧处理所有音频数据（包括最后一帧可能补零）
+            for i in range(0, len(raw_data), frame_size * 2):  # 16bit=2bytes/sample
+                # 获取当前帧的二进制数据
+                chunk = raw_data[i:i + frame_size * 2]
 
-            # 编码Opus数据
-            opus_data = encoder.encode(np_frame.tobytes(), frame_size)
-            opus_datas.append(opus_data)
+                # 如果最后一帧不足，补零
+                if len(chunk) < frame_size * 2:
+                    chunk += b'\x00' * (frame_size * 2 - len(chunk))
+
+                # 转换为numpy数组处理 - Numba might optimize this if needed later
+                # np_frame = np.frombuffer(chunk, dtype=np.int16)
+                # 直接使用 bytes
+
+                # 编码Opus数据
+                # opus_data = encoder.encode(np_frame.tobytes(), frame_size)
+                opus_data = encoder.encode(chunk, frame_size)
+                opus_datas.append(opus_data)
+        except Exception as e:
+             logger.bind(tag=TAG).error(f"Error during Opus encoding for {audio_file_path}: {e}", exc_info=True)
+             return [], 0.0 # Return empty list on encoding error
 
         return opus_datas, duration

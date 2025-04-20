@@ -813,8 +813,19 @@
                     source.onended = () => {
                         log('Opus 音频播放结束', 'info');
                         isAudioPlaying = false;
-                        expectedAudioFormat = 'opus'; // 重置状态
                         // streamingContext = null; // 如果不再需要复杂流式处理
+
+                        // --- BEGIN MODIFICATION ---
+                        // Check if more packets arrived during playback
+                        if (audioBufferQueue.length > 0) {
+                            log(`播放结束后发现队列中还有 ${audioBufferQueue.length} 个包，继续播放...`, 'info');
+                            // Use setTimeout to avoid direct recursion and allow event loop to breathe
+                            setTimeout(playBufferedAudio, 50); // Schedule next playback shortly
+                        } else {
+                            log('播放结束后队列为空，停止播放循环。', 'info');
+                            expectedAudioFormat = 'opus'; // Reset format only when truly finished
+                        }
+                        // --- END MODIFICATION ---
                     };
                     source.start();
                     log(`开始播放解码后的 ${allPcmData.length} 个 Opus 样本`, 'debug');

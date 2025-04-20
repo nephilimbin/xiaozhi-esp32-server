@@ -1,10 +1,11 @@
 """MCP服务管理器"""
-import os, json
+import os
+import json
 from typing import Dict, Any, List
 from .MCPClient import MCPClient
 from config.logger import setup_logging
 from core.utils.util import get_project_dir
-from plugins_func.register import register_function, ActionResponse, Action, ToolType
+from plugins_func.register import register_function, ToolType
 
 TAG = __name__
 
@@ -18,9 +19,9 @@ class MCPManager:
         self.conn = conn
         self.logger = setup_logging()
         self.config_path = get_project_dir() + 'data/.mcp_server_settings.json'
-        if os.path.exists(self.config_path) == False:
+        if not os.path.exists(self.config_path):
             self.config_path = ""
-            self.logger.bind(tag=TAG).warning(f"请检查mcp服务配置文件：data/.mcp_server_settings.json")
+            self.logger.bind(tag=TAG).warning("请检查mcp服务配置文件：data/.mcp_server_settings.json")
         self.client: Dict[str, MCPClient] = {}
         self.tools = []
 
@@ -79,7 +80,7 @@ class MCPManager:
             bool: 是否是MCP工具
         """
         for tool in self.tools:
-            if tool.get("function") != None and tool["function"].get("name") == tool_name:
+            if tool.get("function") is not None and tool["function"].get("name") == tool_name:
                 return True
         return False
 
