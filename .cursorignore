@@ -19,10 +19,13 @@ __pycache__
 logs/*
 
 # project
-xiaozhi-esp32-server/main/xiaozhi-server/models/*
 xiaozhi-esp32-server/main/manager-api/*
 xiaozhi-esp32-server/main/manager-web/*
-xiaozhi-esp32-server/xiaozhi-esp32-server/main/xiaozhi-server/models/*
+xiaozhi-esp32-server/main/xiaozhi-server/models/*
+# xiaozhi-esp32-server/main/xiaozhi-server/*
+
+# new project
 xiaozhi-esp32-server/xiaozhi-esp32-server/main/manager-api/*
 xiaozhi-esp32-server/xiaozhi-esp32-server/main/manager-web/*
+xiaozhi-esp32-server/xiaozhi-esp32-server/main/xiaozhi-server/models/*
 xiaozhi-esp32-server/xiaozhi-esp32-server/*

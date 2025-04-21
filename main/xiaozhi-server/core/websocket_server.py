@@ -17,6 +17,7 @@ class WebSocketServer:
             self._create_processing_instances()
         )
         self.active_connections = set()  # 添加全局连接记录
+        self.server = None # 添加 server 实例变量
 
     def _get_selected_provider_config(self, provider_type: str) -> Optional[Dict[str, Any]]:
         """获取当前选定提供者的配置"""
@@ -93,6 +94,63 @@ class WebSocketServer:
 
         return _vad, _asr, _llm, _tts, _memory, _intent
 
+    async def close(self):
+        """关闭 WebSocket 服务器和所有活动连接"""
+        self.logger.bind(tag=TAG).info("开始关闭 WebSocket 服务器...")
+
+        # 关闭所有活动连接
+        close_tasks = []
+        for handler in list(self.active_connections): # 使用列表副本以防迭代时修改
+            self.logger.bind(tag=TAG).debug(f"请求关闭连接: {handler.session_id}")
+            # 确保 handler.close 是协程
+            if asyncio.iscoroutinefunction(handler.close):
+                close_tasks.append(asyncio.create_task(handler.close()))
+            else:
+                 # 如果不是协程，可能需要不同的处理方式或记录日志
+                 self.logger.bind(tag=TAG).warning(f"Handler {handler.session_id} 的 close 方法不是协程.")
+
+
+        if close_tasks:
+            try:
+                await asyncio.wait(close_tasks, timeout=10) # 等待所有连接关闭，设置超时
+                self.logger.bind(tag=TAG).info("所有活动连接已请求关闭.")
+            except asyncio.TimeoutError:
+                self.logger.bind(tag=TAG).warning("等待连接关闭超时.")
+            except Exception as e:
+                 self.logger.bind(tag=TAG).error(f"关闭连接时出错: {e}", exc_info=True)
+
+
+        # 如果LLM或其他模块有close方法，也在这里调用
+        modules_to_close = [self._llm, self._tts, self._asr, self._vad, self._memory, self._intent] # 列出所有可能需要关闭的模块
+        for module in modules_to_close:
+            if module and hasattr(module, 'close') and callable(module.close):
+                 module_name = module.__class__.__name__
+                 try:
+                     if asyncio.iscoroutinefunction(module.close):
+                         await module.close()
+                     else:
+                         module.close() # 如果 close 不是 async
+                     self.logger.bind(tag=TAG).info(f"{module_name} 模块已关闭.")
+                 except Exception as e:
+                     self.logger.bind(tag=TAG).error(f"关闭 {module_name} 模块时出错: {e}", exc_info=True)
+
+        # 关闭 websockets 服务器本身
+        if self.server:
+            self.logger.bind(tag=TAG).info("关闭 websocket 服务器...")
+            self.server.close()
+            try:
+                await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
+                self.logger.bind(tag=TAG).info("Websocket 服务器已关闭.")
+            except asyncio.TimeoutError:
+                 self.logger.bind(tag=TAG).warning("等待 websocket 服务器关闭超时.")
+            except Exception as e:
+                 self.logger.bind(tag=TAG).error(f"关闭 websocket 服务器时出错: {e}", exc_info=True)
+            self.server = None
+
+
+        self.logger.bind(tag=TAG).info("WebSocket 服务器关闭完成.")
+
+
     async def start(self):
         server_config = self.config["server"]
         host = server_config["ip"]
@@ -110,8 +168,21 @@ class WebSocketServer:
         self.logger.bind(tag=TAG).info(
             "=============================================================\n"
         )
-        async with websockets.serve(self._handle_connection, host, port):
-            await asyncio.Future()
+        self.server = await websockets.serve(self._handle_connection, host, port)
+        self.logger.bind(tag=TAG).info(f"Websocket 服务器正在监听 ws://{host}:{port}")
+        try:
+             await asyncio.Future() # 保持服务器运行直到被取消或出错
+        except asyncio.CancelledError:
+             self.logger.bind(tag=TAG).info("服务器 start 任务被取消.")
+             raise # 重新抛出取消错误，以便上层 finally 可以处理
+        finally:
+             # 这部分关闭逻辑移到 self.close() 中，由 app.py 触发
+             # self.logger.bind(tag=TAG).info("服务器停止运行，关闭 server 对象...")
+             # if self.server:
+             #     self.server.close()
+             #     await self.server.wait_closed()
+             #     self.logger.bind(tag=TAG).info("Server 对象已关闭.")
+             pass # 清理逻辑移至 self.close()
 
     async def _handle_connection(self, websocket):
         """处理新连接，每次创建独立的ConnectionHandler"""
