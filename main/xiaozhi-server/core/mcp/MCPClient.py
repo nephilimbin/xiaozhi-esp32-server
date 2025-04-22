@@ -83,4 +83,25 @@ class MCPClient:
 
     async def cleanup(self):
         """Clean up resources"""
-        await self.exit_stack.aclose()
+        try:
+            self.logger.bind(tag=TAG).debug("Attempting to close AsyncExitStack...")
+            await self.exit_stack.aclose()
+            self.logger.bind(tag=TAG).debug("AsyncExitStack closed successfully.")
+        except RuntimeError as e:
+            if "Attempted to exit cancel scope in a different task" in str(e):
+                # This specific error is often related to anyio's strict task scoping
+                # and might occur during cleanup if the cleanup task is different
+                # from the initialization task. Log as warning and continue.
+                self.logger.bind(tag=TAG).warning(
+                    f"Ignoring expected anyio task mismatch error during stack cleanup: {e}"
+                )
+            else:
+                # Log other unexpected RuntimeErrors
+                self.logger.bind(tag=TAG).error(
+                    f"RuntimeError during AsyncExitStack cleanup: {e}", exc_info=True
+                )
+        except Exception as e:
+            # Catch any other potential errors during cleanup
+            self.logger.bind(tag=TAG).error(
+                f"Unexpected error during AsyncExitStack cleanup: {e}", exc_info=True
+            )

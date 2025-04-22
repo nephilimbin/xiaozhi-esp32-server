@@ -1585,22 +1585,40 @@
         // 发送文本消息
         function sendTextMessage() {
             const message = messageInput.value.trim();
-            if (message === '' || !websocket || websocket.readyState !== WebSocket.OPEN) return;
+            if (!message || !websocket || websocket.readyState !== WebSocket.OPEN) return;
+            log(`准备发送文本: ${message}`);
+
+            let isJsonCommand = false;
+            try {
+                const parsed = JSON.parse(message);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    isJsonCommand = true;
+                }
+            } catch (e) {
+                // 不是有效的 JSON
+            }
 
             try {
-                // 直接发送listen消息，不需要重复发送hello
-                const listenMessage = {
-                    type: 'listen',
-                    mode: 'manual',
-                    state: 'detect',
-                    text: message
-                };
-
-                websocket.send(JSON.stringify(listenMessage));
-                addMessage(message, true);
-                log(`发送文本消息: ${message}`, 'info');
-
-                messageInput.value = '';
+                if (isJsonCommand) {
+                    // 直接发送原始 JSON 字符串
+                    log("检测到 JSON 命令，直接发送。", 'debug');
+                    websocket.send(message);
+                    // 不在对话框显示原始 JSON 命令，或者特殊标记一下
+                    // addMessage(`Sent Command: ${message}`, true);
+                } else {
+                    // 作为普通文本，包裹后发送
+                    log("作为普通文本处理，包装后发送。", 'debug');
+                    const listenMessage = {
+                        type: "listen",
+                        mode: "manual",
+                        state: "detect",
+                        text: message
+                    };
+                    websocket.send(JSON.stringify(listenMessage));
+                    addMessage(message, true); // 显示用户输入的文本
+                    log(`发送文本消息: ${message}`, 'info');
+                }
+                messageInput.value = ''; // 清空输入框
             } catch (error) {
                 log(`发送消息错误: ${error.message}`, 'error');
             }

@@ -5,7 +5,7 @@ import time
 import queue
 import asyncio
 import traceback
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 import threading
 import websockets
@@ -30,6 +30,18 @@ from core.utils.auth_code_gen import AuthCodeGenerator
 from core.mcp.manager import MCPManager
 from .connection.state import StateManager
 from .connection.tasks import TaskDispatcher # Import TaskDispatcher
+from .routing import MessageRouter # Import MessageRouter
+# Import handlers for runtime use (isinstance checks)
+from .message_handlers.text import TextMessageHandler
+from .message_handlers.audio import AudioMessageHandler
+
+# Conditional import for type hinting only (HandlerContext)
+if TYPE_CHECKING:
+    from .message_handlers.context import HandlerContext
+    # Keep Text/Audio handler imports here as well if needed for type hints elsewhere,
+    # but primary import is now above for runtime.
+    # from .message_handlers.text import TextMessageHandler
+    # from .message_handlers.audio import AudioMessageHandler
 
 TAG = __name__
 
@@ -70,6 +82,9 @@ class ConnectionHandler:
 
         # Instantiate TaskDispatcher
         self.dispatcher = TaskDispatcher(self.loop, self.executor, self.tts_queue, self.audio_play_queue)
+
+        # Instantiate MessageRouter (Step 7a')
+        self.router = MessageRouter()
 
         # 依赖的组件
         self.vad = _vad
@@ -211,17 +226,96 @@ class ConnectionHandler:
             await self.close(ws)
 
     async def _route_message(self, message):
-        """消息路由"""
-        if isinstance(message, str):
-            if self.channel:
-                await handleTextMessage(self, message, self.channel)
-            else:
-                self.logger.bind(tag=TAG).error("Communication channel not initialized.")
-        elif isinstance(message, bytes):
-            if self.channel:
-                await handleAudioMessage(self, message)
-            else:
-                self.logger.bind(tag=TAG).error("Communication channel not initialized.")
+        """消息路由 - Step 8a': Route Text to Handler"""
+        handler_instance = self.router.route(message)
+
+        if isinstance(handler_instance, TextMessageHandler):
+            self.logger.bind(tag=TAG).debug(f"Routing to TextMessageHandler")
+            context = self._create_handler_context()
+            try:
+                await handler_instance.handle(message, context)
+                # Update ConnectionHandler state from context if necessary (e.g., client_abort)
+                self.client_abort = context.client_abort
+                self.client_listen_mode = context.client_listen_mode
+                self.client_have_voice = context.client_have_voice
+                self.client_voice_stop = context.client_voice_stop
+                # ... update other relevant states if HandlerContext modifies them
+            except Exception as e:
+                self.logger.bind(tag=TAG).error(f"Error in TextMessageHandler: {e}", exc_info=True)
+                # Log state after copy-back
+                self.logger.bind(tag=TAG).debug(f"State after TextHandler copy-back: self.client_voice_stop={self.client_voice_stop}")
+
+        elif isinstance(handler_instance, AudioMessageHandler):
+            # Step 8b': Route Audio to Handler
+            self.logger.bind(tag=TAG).debug(f"Routing to AudioMessageHandler")
+            context = self._create_handler_context()
+            try:
+                await handler_instance.handle(message, context)
+                # Update ConnectionHandler state from context if necessary
+                self.client_abort = context.client_abort
+                self.asr_server_receive = context.asr_server_receive
+                # Update ConnectionHandler state from context if necessary
+                self.asr_audio = list(context.asr_audio) # Sync back the audio buffer
+                # ... update other relevant states if HandlerContext modifies them
+            except Exception as e:
+                self.logger.bind(tag=TAG).error(f"Error in AudioMessageHandler: {e}", exc_info=True)
+            # REMOVED: await handleAudioMessage(self, message)
+            # Original audio handling logic now lives in AudioMessageHandler
+
+        elif handler_instance:
+             # Handle other potential handlers if added later
+             self.logger.bind(tag=TAG).warning(f"Routing for handler type {type(handler_instance).__name__} not fully implemented yet.")
+
+        else: # handler_instance is None
+            self.logger.bind(tag=TAG).warning(f"Router returned None for message type: {type(message)}, cannot route.")
+            # Optionally handle unknown message types directly here if needed
+
+    def _create_handler_context(self) -> 'HandlerContext':
+        """Creates and populates the HandlerContext for message handlers."""
+        # Import HandlerContext here for runtime use
+        from .message_handlers.context import HandlerContext
+        from collections import deque # Import deque if asr_audio needs it
+
+        # Ensure all required fields for HandlerContext are sourced from self
+        # Note: This assumes HandlerContext definition matches the attributes available in ConnectionHandler (self)
+        context = HandlerContext(
+            # Core Dependencies
+            channel=self.channel,
+            config=self.config,
+            logger=self.logger,
+            session_id=self.session_id,
+            executor=self.executor,
+            asr=self.asr,               # Pass ASR instance
+            vad=self.vad,               # Pass VAD instance
+            chat=self.llm,              # Pass primary LLM as 'chat'
+            chat_with_function_calling=self.llm, # Pass primary LLM (needs specific one if different)
+            dispatcher=self.dispatcher,
+            state_manager=self.state_manager,
+            auth=self.auth,
+            loop=self.loop,
+            tts_queue=self.tts_queue,
+            audio_play_queue=self.audio_play_queue,
+            conn_handler=self, # Pass the ConnectionHandler instance itself
+
+            # Connection State (copying current state)
+            cmd_exit=self.cmd_exit, # Pass exit commands
+            # Ensure asr_audio is handled correctly (list vs deque)
+            # HandlerContext expects Deque, ConnectionHandler uses list. Convert or adapt.
+            asr_audio=deque(self.asr_audio, maxlen=50), # Convert list to deque
+            asr_server_receive=self.asr_server_receive,
+            client_listen_mode=self.client_listen_mode,
+            client_have_voice=self.client_have_voice,
+            client_voice_stop=self.client_voice_stop,
+            client_no_voice_last_time=self.client_no_voice_last_time,
+            client_abort=self.client_abort,
+            client_speak=False, # This state might need careful management - get from where?
+            client_speak_last_time=0.0, # This state might need careful management
+            use_function_call_mode=self.use_function_call_mode,
+            close_after_chat=self.close_after_chat,
+            # Add any other necessary fields from self that HandlerContext requires
+        )
+        self.logger.bind(tag=TAG).debug(f"Creating context: client_voice_stop={context.client_voice_stop}")
+        return context
 
     def _initialize_components(self):
         """加载提示词"""

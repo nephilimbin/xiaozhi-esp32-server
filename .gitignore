@@ -160,7 +160,7 @@ main/manager-api/.vscode
 main/manager-web/.webpack_cache/
 
 # other directories
-xiaozhi-esp32-server/
+xiaozhi-esp32-server/*
 
 # === Rules from main/mobile-javus/.gitignore ===
 

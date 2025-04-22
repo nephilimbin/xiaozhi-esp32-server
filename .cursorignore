@@ -21,6 +21,7 @@ logs/*
 # project
 xiaozhi-esp32-server/main/manager-api/*
 xiaozhi-esp32-server/main/manager-web/*
+xiaozhi-esp32-server/main/mobile-javus/*
 xiaozhi-esp32-server/main/xiaozhi-server/models/*
 # xiaozhi-esp32-server/main/xiaozhi-server/*
 
@@ -29,3 +30,6 @@ xiaozhi-esp32-server/xiaozhi-esp32-server/main/manager-api/*
 xiaozhi-esp32-server/xiaozhi-esp32-server/main/manager-web/*
 xiaozhi-esp32-server/xiaozhi-esp32-server/main/xiaozhi-server/models/*
 xiaozhi-esp32-server/xiaozhi-esp32-server/*
+
+
+
