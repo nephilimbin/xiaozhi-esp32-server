@@ -1,9 +1,13 @@
 # New file: main/xiaozhi-server/core/routing.py
-import json
 # Import handlers when needed
-from .message_handlers.base import BaseMessageHandler
-from .message_handlers.text import TextMessageHandler
-from .message_handlers.audio import AudioMessageHandler
+from core.message_handlers.base import BaseMessageHandler
+from core.message_handlers.text import TextMessageHandler
+from core.message_handlers.audio import AudioMessageHandler
+from config.logger import setup_logging
+
+
+logger = setup_logging()
+TAG = __name__
 
 class MessageRouter:
     def __init__(self):
@@ -23,5 +27,7 @@ class MessageRouter:
             return self._audio_handler
 
         # Return None or a default handler if type is unknown
-        print(f"Warning: Unknown message type for routing: {type(message)}")
+        logger.bind(tag=TAG).warning(f"Unknown message type for routing: {type(message)}")
         return None
+    
+

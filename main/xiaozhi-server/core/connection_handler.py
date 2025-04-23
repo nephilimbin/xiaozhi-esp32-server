@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 
 import threading
 import websockets
+from collections import deque
 from plugins_func.loadplugins import auto_import_modules
 from config.logger import setup_logging
 from core.utils.dialogue import Message, Dialogue
@@ -18,8 +19,8 @@ from core.utils.util import (
     extract_json_from_string,
     get_ip_info,
 )
-from .channels.interface import ICommunicationChannel
-from .channels.websocket import WebSocketChannel
+from core.channels.interface import ICommunicationChannel
+from core.channels.websocket import WebSocketChannel
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from core.handle.sendAudioHandler import sendAudioMessage, send_stt_message
 from core.handle.receiveAudioHandler import handleAudioMessage
@@ -30,23 +31,15 @@ from core.utils.auth_code_gen import AuthCodeGenerator
 from core.mcp.manager import MCPManager
 from .connection.state import StateManager
 from .connection.tasks import TaskDispatcher # Import TaskDispatcher
-from .routing import MessageRouter # Import MessageRouter
-# Import handlers for runtime use (isinstance checks)
-from .message_handlers.text import TextMessageHandler
-from .message_handlers.audio import AudioMessageHandler
+from core.message_handlers.router import MessageRouter # Import MessageRouter
+from core.message_handlers.text import TextMessageHandler
+from core.message_handlers.audio import AudioMessageHandler
+from core.message_handlers.context import HandlerContext
 
-# Conditional import for type hinting only (HandlerContext)
-if TYPE_CHECKING:
-    from .message_handlers.context import HandlerContext
-    # Keep Text/Audio handler imports here as well if needed for type hints elsewhere,
-    # but primary import is now above for runtime.
-    # from .message_handlers.text import TextMessageHandler
-    # from .message_handlers.audio import AudioMessageHandler
 
 TAG = __name__
 
 auto_import_modules("plugins_func.functions")
-
 
 class TTSException(RuntimeError):
     pass
@@ -230,7 +223,7 @@ class ConnectionHandler:
         handler_instance = self.router.route(message)
 
         if isinstance(handler_instance, TextMessageHandler):
-            self.logger.bind(tag=TAG).debug(f"Routing to TextMessageHandler")
+            self.logger.bind(tag=TAG).debug("Routing to TextMessageHandler")
             context = self._create_handler_context()
             try:
                 await handler_instance.handle(message, context)
@@ -247,7 +240,7 @@ class ConnectionHandler:
 
         elif isinstance(handler_instance, AudioMessageHandler):
             # Step 8b': Route Audio to Handler
-            self.logger.bind(tag=TAG).debug(f"Routing to AudioMessageHandler")
+            self.logger.bind(tag=TAG).debug("Routing to AudioMessageHandler")
             context = self._create_handler_context()
             try:
                 await handler_instance.handle(message, context)
@@ -272,49 +265,37 @@ class ConnectionHandler:
 
     def _create_handler_context(self) -> 'HandlerContext':
         """Creates and populates the HandlerContext for message handlers."""
-        # Import HandlerContext here for runtime use
-        from .message_handlers.context import HandlerContext
-        from collections import deque # Import deque if asr_audio needs it
-
         # Ensure all required fields for HandlerContext are sourced from self
         # Note: This assumes HandlerContext definition matches the attributes available in ConnectionHandler (self)
         context = HandlerContext(
-            # Core Dependencies
             channel=self.channel,
             config=self.config,
             logger=self.logger,
             session_id=self.session_id,
             executor=self.executor,
-            asr=self.asr,               # Pass ASR instance
-            vad=self.vad,               # Pass VAD instance
-            chat=self.llm,              # Pass primary LLM as 'chat'
-            chat_with_function_calling=self.llm, # Pass primary LLM (needs specific one if different)
+            asr=self.asr,
+            vad=self.vad,
+            llm=self.llm,
             dispatcher=self.dispatcher,
             state_manager=self.state_manager,
             auth=self.auth,
             loop=self.loop,
             tts_queue=self.tts_queue,
             audio_play_queue=self.audio_play_queue,
-            conn_handler=self, # Pass the ConnectionHandler instance itself
-
-            # Connection State (copying current state)
-            cmd_exit=self.cmd_exit, # Pass exit commands
-            # Ensure asr_audio is handled correctly (list vs deque)
-            # HandlerContext expects Deque, ConnectionHandler uses list. Convert or adapt.
-            asr_audio=deque(self.asr_audio, maxlen=50), # Convert list to deque
+            conn_handler=self,
+            cmd_exit=self.cmd_exit,
             asr_server_receive=self.asr_server_receive,
             client_listen_mode=self.client_listen_mode,
             client_have_voice=self.client_have_voice,
             client_voice_stop=self.client_voice_stop,
             client_no_voice_last_time=self.client_no_voice_last_time,
             client_abort=self.client_abort,
-            client_speak=False, # This state might need careful management - get from where?
-            client_speak_last_time=0.0, # This state might need careful management
             use_function_call_mode=self.use_function_call_mode,
             close_after_chat=self.close_after_chat,
-            # Add any other necessary fields from self that HandlerContext requires
+            asr_audio=self.asr_audio,
+            client_speak=False,
+            client_speak_last_time=0.0,
         )
-        self.logger.bind(tag=TAG).debug(f"Creating context: client_voice_stop={context.client_voice_stop}")
         return context
 
     def _initialize_components(self):

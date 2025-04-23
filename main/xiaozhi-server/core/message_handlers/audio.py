@@ -1,13 +1,11 @@
 # New file: main/xiaozhi-server/core/message_handlers/audio.py
 import time
 from config.logger import setup_logging
-from ..utils.util import remove_punctuation_and_length
-# Keep old imports for now - these dependencies need careful handling
-from ..handle.sendAudioHandler import send_stt_message
-from ..handle.intentHandler import handle_user_intent
-
-from .base import BaseMessageHandler
-from .context import HandlerContext
+from core.utils.util import remove_punctuation_and_length
+from core.handle.sendAudioHandler import send_stt_message
+from core.handle.intentHandler import handle_user_intent
+from core.message_handlers.base import BaseMessageHandler
+from core.message_handlers.context import HandlerContext
 
 TAG = __name__
 logger = setup_logging()
@@ -22,14 +20,14 @@ class AudioMessageHandler(BaseMessageHandler):
 
         # Directly use context attributes
         if not context.asr_server_receive:
-            logger.bind(tag=TAG).debug(f"[handle] Exiting early: context.asr_server_receive is False.") # Log check
+            logger.bind(tag=TAG).debug("[handle] Exiting early: context.asr_server_receive is False.") # Log check
             return
 
         have_voice = False # Default value
         try:
             # Use context attributes and pass context/conn_handler to dependencies if needed
             if context.client_listen_mode == "auto":
-                logger.bind(tag=TAG).debug(f"[handle] Mode auto, calling VAD...") # Log VAD call
+                logger.bind(tag=TAG).debug("[handle] Mode auto, calling VAD...") # Log VAD call
                 # Assuming vad.is_vad expects the handler/connection object for some reason
                 have_voice = context.vad.is_vad(context.conn_handler, audio)
                 logger.bind(tag=TAG).debug(f"[handle] VAD result: {have_voice}") # Log VAD result
@@ -59,7 +57,7 @@ class AudioMessageHandler(BaseMessageHandler):
         # Check if client signaled stop
         logger.bind(tag=TAG).debug(f"[handle] Checking context.client_voice_stop: {context.client_voice_stop}") # Log before check
         if context.client_voice_stop:
-             logger.bind(tag=TAG).debug(f"[handle] context.client_voice_stop is True. Starting ASR processing.") # Log processing start
+             logger.bind(tag=TAG).debug("[handle] context.client_voice_stop is True. Starting ASR processing.") # Log processing start
              context.client_abort = False
 
         if context.client_voice_stop:
@@ -122,7 +120,7 @@ class AudioMessageHandler(BaseMessageHandler):
 
         # Ensure ASR is ready after submitting the task
         context.asr_server_receive = True
-        logger.bind(tag=TAG).debug(f"[_startToChat] Set asr_server_receive=True")
+        logger.bind(tag=TAG).debug("[_startToChat] Set asr_server_receive=True")
 
     async def _no_voice_close_connect(self, context: HandlerContext):
         """Handles logic for closing connection due to prolonged silence (uses context)"""
@@ -146,8 +144,3 @@ class AudioMessageHandler(BaseMessageHandler):
                 prompt = '''请你以"时间过得真快"为开头，用富有感情、依依不舍的话来结束这场对话吧。'''
                 await self._startToChat(context, prompt)
 
-# Note: send_stt_message and handle_user_intent are still imported from old locations.
-# They also need to be adapted to use context if called directly.
-# Ideally, logic from these should be moved into relevant handlers or services
-# accessible via the context (e.g., context.dispatcher, context.intent_analyzer).
-# For now, we pass 'context' where 'conn' was expected, assuming attributes match. 

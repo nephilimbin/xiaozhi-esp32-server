@@ -2,7 +2,7 @@
 import json
 import asyncio
 from config.logger import setup_logging
-from ..handle.abortHandler import handleAbortMessage # Keep old import for now
+from core.handle.abortHandler import handleAbortMessage # Keep old import for now
 from ..handle.helloHandler import handleHelloMessage # Keep old import for now
 from ..utils.util import remove_punctuation_and_length
 from ..handle.receiveAudioHandler import startToChat, handleAudioMessage # Keep old import for now
@@ -60,7 +60,7 @@ class TextMessageHandler(BaseMessageHandler):
                     # Immediately update the shared ConnectionHandler state as well
                     if hasattr(context, 'conn_handler') and context.conn_handler:
                          context.conn_handler.client_voice_stop = True
-                         logger.bind(tag=TAG).debug(f"Updated conn_handler.client_voice_stop=True")
+                         logger.bind(tag=TAG).debug("Updated conn_handler.client_voice_stop=True")
                     else:
                          logger.bind(tag=TAG).warning("Cannot update conn_handler state: conn_handler not found in context.")
 
@@ -68,7 +68,7 @@ class TextMessageHandler(BaseMessageHandler):
                     logger.bind(tag=TAG).debug(f"Received listen stop signal. Buffer size: {len(context.asr_audio)}")
                     # Trigger audio processing if buffer has content
                     if len(context.asr_audio) > 0:
-                        logger.bind(tag=TAG).info(f"Listen stop received with non-empty buffer. Triggering ASR processing.")
+                        logger.bind(tag=TAG).info("Listen stop received with non-empty buffer. Triggering ASR processing.")
                         try:
                             # Simulate empty audio message to trigger AudioHandler processing
                             await context.conn_handler._route_message(b"")
