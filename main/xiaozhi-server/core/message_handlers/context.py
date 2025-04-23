@@ -10,6 +10,7 @@ from core.auth import AuthMiddleware
 import asyncio
 from asyncio import Queue
 
+
 @dataclass
 class HandlerContext:
     """Context object passed to message handlers, containing necessary dependencies and state."""
@@ -27,7 +28,7 @@ class HandlerContext:
     loop: asyncio.AbstractEventLoop
     tts_queue: Queue
     audio_play_queue: Queue
-    conn_handler: Any # TODO 临时为了代码正常测试和迁移，迁移后删除。
+    conn_handler: Any  # TODO 临时为了代码正常测试和迁移，迁移后删除。
     cmd_exit: List[str]
     asr_server_receive: bool
     client_listen_mode: str

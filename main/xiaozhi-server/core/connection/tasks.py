@@ -5,8 +5,15 @@ from concurrent.futures import ThreadPoolExecutor, Future
 import queue
 from typing import Any, Callable, Tuple
 
+
 class TaskDispatcher:
-    def __init__(self, loop: asyncio.AbstractEventLoop, executor: ThreadPoolExecutor, tts_queue: queue.Queue, audio_queue: queue.Queue):
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        executor: ThreadPoolExecutor,
+        tts_queue: queue.Queue,
+        audio_queue: queue.Queue,
+    ):
         self.loop = loop
         self.executor = executor
         self.tts_queue = tts_queue
@@ -25,7 +32,7 @@ class TaskDispatcher:
             self.tts_queue.put_nowait(future)
         except queue.Full:
             # Handle queue full scenario if necessary, e.g., log a warning
-            print("Warning: TTS queue is full.") # Or use proper logging
+            print("Warning: TTS queue is full.")  # Or use proper logging
             # Optionally, handle the future (e.g., cancel it)
             future.cancel()
             pass
@@ -41,5 +48,5 @@ class TaskDispatcher:
             self.audio_queue.put_nowait(data_tuple)
         except queue.Full:
             # Handle queue full scenario if necessary
-            print("Warning: Audio play queue is full.") # Or use proper logging
-            pass 
+            print("Warning: Audio play queue is full.")  # Or use proper logging
+            pass

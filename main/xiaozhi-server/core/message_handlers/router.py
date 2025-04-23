@@ -9,6 +9,7 @@ from config.logger import setup_logging
 logger = setup_logging()
 TAG = __name__
 
+
 class MessageRouter:
     def __init__(self):
         # Initialize handlers - potentially make these singletons or manage differently
@@ -27,7 +28,7 @@ class MessageRouter:
             return self._audio_handler
 
         # Return None or a default handler if type is unknown
-        logger.bind(tag=TAG).warning(f"Unknown message type for routing: {type(message)}")
+        logger.bind(tag=TAG).warning(
+            f"Unknown message type for routing: {type(message)}"
+        )
         return None
-    
-
