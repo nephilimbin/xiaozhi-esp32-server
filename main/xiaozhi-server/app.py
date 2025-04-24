@@ -9,6 +9,7 @@ from config.logger import setup_logging
 TAG = __name__
 logger = setup_logging()
 
+
 async def wait_for_exit():
     """Windows 和 Linux 兼容的退出监听"""
     loop = asyncio.get_running_loop()
@@ -21,9 +22,11 @@ async def wait_for_exit():
         # Linux/macOS: 用 signal 监听 Ctrl + C
         def stop():
             stop_event.set()
+
         loop.add_signal_handler(signal.SIGINT, stop)
         loop.add_signal_handler(signal.SIGTERM, stop)  # 支持 kill 进程
         await stop_event.wait()
+
 
 async def main():
     check_config_file()
@@ -41,7 +44,11 @@ async def main():
         logger.bind(tag=TAG).info("主任务被取消...")
     finally:
         logger.bind(tag=TAG).info("开始关闭服务器...")
-        if not server_closed and hasattr(ws_server, 'close') and callable(ws_server.close):
+        if (
+            not server_closed
+            and hasattr(ws_server, "close")
+            and callable(ws_server.close)
+        ):
             try:
                 logger.bind(tag=TAG).info("调用 ws_server.close()...")
                 await ws_server.close()
@@ -65,6 +72,7 @@ async def main():
             logger.bind(tag=TAG).info("ws_task 已经完成.")
 
         logger.bind(tag=TAG).info("服务器已关闭，程序退出。")
+
 
 if __name__ == "__main__":
     try:

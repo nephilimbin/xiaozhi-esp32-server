@@ -272,6 +272,6 @@ class WebSocketServer:
         )
         self.active_connections.add(handler)
         try:
-            await handler.handle_connection(handler.websocket)
+            await handler.handle_connection()
         finally:
             self.active_connections.discard(handler)

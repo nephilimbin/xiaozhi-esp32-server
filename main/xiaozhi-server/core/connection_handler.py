@@ -49,39 +49,35 @@ class TTSException(RuntimeError):
 class ConnectionHandler:
     def __init__(
         self,
-        _websocket,
-        _config: Dict[str, Any],
-        _vad,
-        _asr,
-        _llm,
-        _tts,
-        _memory,
-        _intent,
+        websocket,
+        config: Dict[str, Any],
+        vad,
+        asr,
+        llm,
+        tts,
+        memory,
+        intent,
     ):
         # 依赖的组件
-        self.vad = _vad
-        self.asr = _asr
-        self.llm = _llm
-        self.tts = _tts
-        self.memory = _memory
-        self.intent = _intent
+        self.vad = vad
+        self.asr = asr
+        self.llm = llm
+        self.tts = tts
+        self.memory = memory
+        self.intent = intent
 
         # 全局变量
-        self.config = _config
+        self.config = config
+        self.websocket = websocket
         self.logger = setup_logging()
-        self.auth = AuthMiddleware(_config)
-        self.websocket = _websocket
         self.channel: Optional[ICommunicationChannel] = None
-        self.headers = None
-        self.client_ip = None
+        self.auth = AuthMiddleware(config)
+        self.headers = None  # 私有属性
+        self.client_ip = None  # 私有属性
         self.client_ip_info = {}
         self.session_id = None
         self.prompt = None
         self.welcome_msg = None
-
-        # 客户端状态相关
-        self.client_abort = False
-        self.client_listen_mode = "auto"
 
         # 线程任务相关
         self.loop = asyncio.get_event_loop()
@@ -90,13 +86,16 @@ class ConnectionHandler:
         self.audio_play_queue = queue.Queue()
         self.executor = ThreadPoolExecutor(max_workers=10)
 
-        # Instantiate TaskDispatcher
+        # 任务调度器
         self.dispatcher = TaskDispatcher(
             self.loop, self.executor, self.tts_queue, self.audio_play_queue
         )
+        self.router = MessageRouter()  # 消息路由器
+        self.state_manager = StateManager()  # 状态管理器
 
-        # Instantiate MessageRouter (Step 7a')
-        self.router = MessageRouter()
+        # 客户端状态相关
+        self.client_abort = False
+        self.client_listen_mode = "auto"
 
         # vad相关变量
         self.client_audio_buffer = bytearray()
@@ -121,27 +120,61 @@ class ConnectionHandler:
         self.iot_descriptors = {}
         self.func_handler = None
 
+        # 函数调用相关变量
+        self.use_function_call_mode = (
+            False
+            if self.config["selected_module"]["Intent"] != "function_call"
+            else True
+        )
+
+        # 退出命令相关变量
         self.cmd_exit = self.config["exit_commands"]
         self.max_cmd_length = 0
         for cmd in self.cmd_exit:
             if len(cmd) > self.max_cmd_length:
                 self.max_cmd_length = len(cmd)
-
-        self.state_manager = StateManager()
+        # 私有配置相关变量
         self.private_config = None
         self.auth_code_gen = AuthCodeGenerator.get_instance()
         self.is_device_verified = False  # 添加设备验证状态标志
-        self.close_after_chat = False  # 是否在聊天结束后关闭连接
-        self.use_function_call_mode = False
-        if self.config["selected_module"]["Intent"] == "function_call":
-            self.use_function_call_mode = True
+        self.close_after_chat = False  # 是否在聊天结束后关闭连接,暂时程序未用到
 
-    async def handle_connection(self, ws):
+    def _create_handler_context(self) -> "HandlerContext":
+        """Creates and populates the HandlerContext for message handlers."""
+        # Ensure all required fields for HandlerContext are sourced from self
+        # Note: This assumes HandlerContext definition matches the attributes available in ConnectionHandler (self)
+        self.contexter = HandlerContext(
+            vad=self.vad,
+            asr=self.asr,
+            llm=self.llm,
+            tts=self.tts,
+            memory=self.memory,
+            intent=self.intent,
+            config=self.config,
+            websocket=self.websocket,
+            logger=self.logger,
+            channel=self.channel,
+            client_ip_info=self.client_ip_info,
+            session_id=self.session_id,
+            prompt=self.prompt,
+            welcome_msg=self.welcome_msg,
+            loop=self.loop,
+            stop_event=self.stop_event,
+            tts_queue=self.tts_queue,
+            audio_play_queue=self.audio_play_queue,
+            executor=self.executor,
+            dispatcher=self.dispatcher,
+            router=self.router,
+            state_manager=self.state_manager,
+            # conn_handler=self,
+        )  # 单个连接的上下文
+
+    async def handle_connection(self):
         try:
             # 获取并验证headers
-            self.headers = dict(ws.request.headers)
+            self.headers = dict(self.websocket.request.headers)
             # 获取客户端ip地址
-            self.client_ip = ws.remote_address[0]
+            self.client_ip = self.websocket.remote_address[0]
             self.logger.bind(tag=TAG).info(
                 f"{self.client_ip} conn - Headers: {self.headers}"
             )
@@ -151,7 +184,6 @@ class ConnectionHandler:
             device_id = self.headers.get("device-id", None)
 
             # 认证通过,继续处理
-            self.websocket = ws
             self.session_id = str(uuid.uuid4())
             self.channel = WebSocketChannel(self.websocket)
 
@@ -190,8 +222,10 @@ class ConnectionHandler:
                     # Keep using default LLM/TTS, private_config might still be useful for prompts etc.
 
             # 异步初始化 - 使用 TaskDispatcher
-            # self.executor.submit(self._initialize_components)
             self.dispatcher.dispatch_plugin_task(self._initialize_components)
+
+            # 创建contexter
+            self.dispatcher.dispatch_plugin_task(self._create_handler_context)
 
             # tts 消化线程
             self.tts_priority_thread = threading.Thread(
@@ -219,7 +253,7 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"Connection error: {str(e)}-{stack_trace}")
             return
         finally:
-            await self._save_and_close(ws)
+            await self._save_and_close(self.websocket)
 
     async def _save_and_close(self, ws):
         """保存记忆并关闭连接"""
@@ -238,14 +272,12 @@ class ConnectionHandler:
 
         if isinstance(handler_instance, TextMessageHandler):
             self.logger.bind(tag=TAG).debug("Routing to TextMessageHandler")
-            context = self._create_handler_context()
             try:
-                await handler_instance.handle(message, context)
-                # Update ConnectionHandler state from context if necessary (e.g., client_abort)
-                self.client_abort = context.client_abort
-                self.client_listen_mode = context.client_listen_mode
-                self.client_have_voice = context.client_have_voice
-                self.client_voice_stop = context.client_voice_stop
+                await handler_instance.handle(message, self.contexter)
+                self.client_abort = self.contexter.client_abort
+                self.client_listen_mode = self.contexter.client_listen_mode
+                self.client_have_voice = self.contexter.client_have_voice
+                self.client_voice_stop = self.contexter.client_voice_stop
                 # ... update other relevant states if HandlerContext modifies them
             except Exception as e:
                 self.logger.bind(tag=TAG).error(
@@ -257,16 +289,15 @@ class ConnectionHandler:
                 )
 
         elif isinstance(handler_instance, AudioMessageHandler):
-            # Step 8b': Route Audio to Handler
             self.logger.bind(tag=TAG).debug("Routing to AudioMessageHandler")
-            context = self._create_handler_context()
+            # context = self._create_handler_context()
             try:
-                await handler_instance.handle(message, context)
-                # Update ConnectionHandler state from context if necessary
-                self.client_abort = context.client_abort
-                self.asr_server_receive = context.asr_server_receive
-                # Update ConnectionHandler state from context if necessary
-                self.asr_audio = list(context.asr_audio)  # Sync back the audio buffer
+                await handler_instance.handle(message, self.contexter)
+                self.client_abort = self.contexter.client_abort
+                self.asr_server_receive = self.contexter.asr_server_receive
+                self.asr_audio = list(
+                    self.contexter.asr_audio
+                )  # Sync back the audio buffer
                 # ... update other relevant states if HandlerContext modifies them
             except Exception as e:
                 self.logger.bind(tag=TAG).error(
@@ -286,41 +317,6 @@ class ConnectionHandler:
                 f"Router returned None for message type: {type(message)}, cannot route."
             )
             # Optionally handle unknown message types directly here if needed
-
-    def _create_handler_context(self) -> "HandlerContext":
-        """Creates and populates the HandlerContext for message handlers."""
-        # Ensure all required fields for HandlerContext are sourced from self
-        # Note: This assumes HandlerContext definition matches the attributes available in ConnectionHandler (self)
-        context = HandlerContext(
-            channel=self.channel,
-            config=self.config,
-            logger=self.logger,
-            session_id=self.session_id,
-            executor=self.executor,
-            asr=self.asr,
-            vad=self.vad,
-            llm=self.llm,
-            dispatcher=self.dispatcher,
-            state_manager=self.state_manager,
-            auth=self.auth,
-            loop=self.loop,
-            tts_queue=self.tts_queue,
-            audio_play_queue=self.audio_play_queue,
-            conn_handler=self,
-            cmd_exit=self.cmd_exit,
-            asr_server_receive=self.asr_server_receive,
-            client_listen_mode=self.client_listen_mode,
-            client_have_voice=self.client_have_voice,
-            client_voice_stop=self.client_voice_stop,
-            client_no_voice_last_time=self.client_no_voice_last_time,
-            client_abort=self.client_abort,
-            use_function_call_mode=self.use_function_call_mode,
-            close_after_chat=self.close_after_chat,
-            asr_audio=self.asr_audio,
-            client_speak=False,
-            client_speak_last_time=0.0,
-        )
-        return context
 
     def _initialize_components(self):
         """加载提示词"""
@@ -413,350 +409,350 @@ class ConnectionHandler:
             return False
         return not self.is_device_verified
 
-    def chat(self, query):
-        if self.isNeedAuth():
-            self.llm_finish_task = True
-            future = asyncio.run_coroutine_threadsafe(
-                self._check_and_broadcast_auth_code(), self.loop
-            )
-            future.result()
-            return True
+    # def chat(self, query):
+    #     if self.isNeedAuth():
+    #         self.llm_finish_task = True
+    #         future = asyncio.run_coroutine_threadsafe(
+    #             self._check_and_broadcast_auth_code(), self.loop
+    #         )
+    #         future.result()
+    #         return True
 
-        self.dialogue.put(Message(role="user", content=query))
+    #     self.dialogue.put(Message(role="user", content=query))
 
-        response_message = []
-        processed_chars = 0  # 跟踪已处理的字符位置
-        try:
-            start_time = time.time()
-            # 使用带记忆的对话
-            future = asyncio.run_coroutine_threadsafe(
-                self.memory.query_memory(query), self.loop
-            )
-            memory_str = future.result()
+    #     response_message = []
+    #     processed_chars = 0  # 跟踪已处理的字符位置
+    #     try:
+    #         start_time = time.time()
+    #         # 使用带记忆的对话
+    #         future = asyncio.run_coroutine_threadsafe(
+    #             self.memory.query_memory(query), self.loop
+    #         )
+    #         memory_str = future.result()
 
-            self.logger.bind(tag=TAG).debug(f"记忆内容: {memory_str}")
-            llm_responses = self.llm.response(
-                self.session_id, self.dialogue.get_llm_dialogue_with_memory(memory_str)
-            )
-        except Exception as e:
-            self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
-            return None
+    #         self.logger.bind(tag=TAG).debug(f"记忆内容: {memory_str}")
+    #         llm_responses = self.llm.response(
+    #             self.session_id, self.dialogue.get_llm_dialogue_with_memory(memory_str)
+    #         )
+    #     except Exception as e:
+    #         self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+    #         return None
 
-        self.llm_finish_task = False
-        text_index = 0
-        for content in llm_responses:
-            response_message.append(content)
-            if self.client_abort:
-                break
+    #     self.llm_finish_task = False
+    #     text_index = 0
+    #     for content in llm_responses:
+    #         response_message.append(content)
+    #         if self.client_abort:
+    #             break
 
-            end_time = time.time()
-            # self.logger.bind(tag=TAG).debug(f"大模型返回时间: {end_time - start_time} 秒, 生成token={content}")
+    #         end_time = time.time()
+    #         # self.logger.bind(tag=TAG).debug(f"大模型返回时间: {end_time - start_time} 秒, 生成token={content}")
 
-            # 合并当前全部文本并处理未分割部分
-            full_text = "".join(response_message)
-            current_text = full_text[processed_chars:]  # 从未处理的位置开始
+    #         # 合并当前全部文本并处理未分割部分
+    #         full_text = "".join(response_message)
+    #         current_text = full_text[processed_chars:]  # 从未处理的位置开始
 
-            # 查找最后一个有效标点
-            punctuations = ("。", "？", "！", "；", "：")
-            last_punct_pos = -1
-            for punct in punctuations:
-                pos = current_text.rfind(punct)
-                if pos > last_punct_pos:
-                    last_punct_pos = pos
+    #         # 查找最后一个有效标点
+    #         punctuations = ("。", "？", "！", "；", "：")
+    #         last_punct_pos = -1
+    #         for punct in punctuations:
+    #             pos = current_text.rfind(punct)
+    #             if pos > last_punct_pos:
+    #                 last_punct_pos = pos
 
-            # 找到分割点则处理
-            if last_punct_pos != -1:
-                segment_text_raw = current_text[: last_punct_pos + 1]
-                segment_text = get_string_no_punctuation_or_emoji(segment_text_raw)
-                if segment_text:
-                    # 强制设置空字符，测试TTS出错返回语音的健壮性
-                    # if text_index % 2 == 0:
-                    #     segment_text = " "
-                    text_index += 1
-                    self.logger.bind(tag=TAG).debug(
-                        f"[chat] Found segment [{text_index}]: '{segment_text}'"
-                    )
-                    self.recode_first_last_text(segment_text, text_index)
-                    try:
-                        self.logger.bind(tag=TAG).debug(
-                            f"[chat] Submitting TTS task for index {text_index}..."
-                        )
-                        future = self.executor.submit(
-                            self.speak_and_play, segment_text, text_index
-                        )
-                        self.logger.bind(tag=TAG).debug(
-                            f"[chat] Submitting future for index {text_index} to dispatcher..."
-                        )
-                        self.dispatcher.dispatch_tts(future)
-                        self.logger.bind(tag=TAG).debug(
-                            f"[chat] Dispatched TTS future for index {text_index}."
-                        )
-                        processed_chars += len(segment_text_raw)
-                    except Exception as e:
-                        self.logger.bind(tag=TAG).error(
-                            f"[chat] Error submitting/dispatching TTS task for index {text_index}: {e}",
-                            exc_info=True,
-                        )
+    #         # 找到分割点则处理
+    #         if last_punct_pos != -1:
+    #             segment_text_raw = current_text[: last_punct_pos + 1]
+    #             segment_text = get_string_no_punctuation_or_emoji(segment_text_raw)
+    #             if segment_text:
+    #                 # 强制设置空字符，测试TTS出错返回语音的健壮性
+    #                 # if text_index % 2 == 0:
+    #                 #     segment_text = " "
+    #                 text_index += 1
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"[chat] Found segment [{text_index}]: '{segment_text}'"
+    #                 )
+    #                 self.recode_first_last_text(segment_text, text_index)
+    #                 try:
+    #                     self.logger.bind(tag=TAG).debug(
+    #                         f"[chat] Submitting TTS task for index {text_index}..."
+    #                     )
+    #                     future = self.executor.submit(
+    #                         self.speak_and_play, segment_text, text_index
+    #                     )
+    #                     self.logger.bind(tag=TAG).debug(
+    #                         f"[chat] Submitting future for index {text_index} to dispatcher..."
+    #                     )
+    #                     self.dispatcher.dispatch_tts(future)
+    #                     self.logger.bind(tag=TAG).debug(
+    #                         f"[chat] Dispatched TTS future for index {text_index}."
+    #                     )
+    #                     processed_chars += len(segment_text_raw)
+    #                 except Exception as e:
+    #                     self.logger.bind(tag=TAG).error(
+    #                         f"[chat] Error submitting/dispatching TTS task for index {text_index}: {e}",
+    #                         exc_info=True,
+    #                     )
 
-        # 处理最后剩余的文本
-        full_text = "".join(response_message)
-        remaining_text = full_text[processed_chars:]
-        if remaining_text:
-            segment_text = get_string_no_punctuation_or_emoji(remaining_text)
-            if segment_text:
-                text_index += 1
-                self.logger.bind(tag=TAG).debug(
-                    f"[chat] Found final segment [{text_index}]: '{segment_text}'"
-                )
-                self.recode_first_last_text(segment_text, text_index)
-                try:
-                    self.logger.bind(tag=TAG).debug(
-                        f"[chat] Submitting final TTS task for index {text_index}..."
-                    )
-                    future = self.executor.submit(
-                        self.speak_and_play, segment_text, text_index
-                    )
-                    self.logger.bind(tag=TAG).debug(
-                        f"[chat] Submitting final future for index {text_index} to dispatcher..."
-                    )
-                    self.dispatcher.dispatch_tts(future)
-                    self.logger.bind(tag=TAG).debug(
-                        f"[chat] Dispatched final TTS future for index {text_index}."
-                    )
-                except Exception as e:
-                    self.logger.bind(tag=TAG).error(
-                        f"[chat] Error submitting/dispatching final TTS task for index {text_index}: {e}",
-                        exc_info=True,
-                    )
+    #     # 处理最后剩余的文本
+    #     full_text = "".join(response_message)
+    #     remaining_text = full_text[processed_chars:]
+    #     if remaining_text:
+    #         segment_text = get_string_no_punctuation_or_emoji(remaining_text)
+    #         if segment_text:
+    #             text_index += 1
+    #             self.logger.bind(tag=TAG).debug(
+    #                 f"[chat] Found final segment [{text_index}]: '{segment_text}'"
+    #             )
+    #             self.recode_first_last_text(segment_text, text_index)
+    #             try:
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"[chat] Submitting final TTS task for index {text_index}..."
+    #                 )
+    #                 future = self.executor.submit(
+    #                     self.speak_and_play, segment_text, text_index
+    #                 )
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"[chat] Submitting final future for index {text_index} to dispatcher..."
+    #                 )
+    #                 self.dispatcher.dispatch_tts(future)
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"[chat] Dispatched final TTS future for index {text_index}."
+    #                 )
+    #             except Exception as e:
+    #                 self.logger.bind(tag=TAG).error(
+    #                     f"[chat] Error submitting/dispatching final TTS task for index {text_index}: {e}",
+    #                     exc_info=True,
+    #                 )
 
-        self.llm_finish_task = True
-        self.dialogue.put(Message(role="assistant", content="".join(response_message)))
-        self.logger.bind(tag=TAG).debug(
-            json.dumps(self.dialogue.get_llm_dialogue(), indent=4, ensure_ascii=False)
-        )
-        return True
+    #     self.llm_finish_task = True
+    #     self.dialogue.put(Message(role="assistant", content="".join(response_message)))
+    #     self.logger.bind(tag=TAG).debug(
+    #         json.dumps(self.dialogue.get_llm_dialogue(), indent=4, ensure_ascii=False)
+    #     )
+    #     return True
 
-    def chat_with_function_calling(self, query, tool_call=False):
-        self.logger.bind(tag=TAG).debug(f"Chat with function calling start: {query}")
-        """Chat with function calling for intent detection using streaming"""
-        if self.isNeedAuth():
-            self.llm_finish_task = True
-            future = asyncio.run_coroutine_threadsafe(
-                self._check_and_broadcast_auth_code(), self.loop
-            )
-            future.result()
-            return True
+    # def chat_with_function_calling(self, query, tool_call=False):
+    #     self.logger.bind(tag=TAG).debug(f"Chat with function calling start: {query}")
+    #     """Chat with function calling for intent detection using streaming"""
+    #     if self.isNeedAuth():
+    #         self.llm_finish_task = True
+    #         future = asyncio.run_coroutine_threadsafe(
+    #             self._check_and_broadcast_auth_code(), self.loop
+    #         )
+    #         future.result()
+    #         return True
 
-        if not tool_call:
-            self.dialogue.put(Message(role="user", content=query))
+    #     if not tool_call:
+    #         self.dialogue.put(Message(role="user", content=query))
 
-        # Define intent functions
-        functions = None
-        if hasattr(self, "func_handler"):
-            functions = self.func_handler.get_functions()
-        response_message = []
-        processed_chars = 0  # 跟踪已处理的字符位置
+    #     # Define intent functions
+    #     functions = None
+    #     if hasattr(self, "func_handler"):
+    #         functions = self.func_handler.get_functions()
+    #     response_message = []
+    #     processed_chars = 0  # 跟踪已处理的字符位置
 
-        try:
-            start_time = time.time()
+    #     try:
+    #         start_time = time.time()
 
-            # 使用带记忆的对话
-            future = asyncio.run_coroutine_threadsafe(
-                self.memory.query_memory(query), self.loop
-            )
-            memory_str = future.result()
+    #         # 使用带记忆的对话
+    #         future = asyncio.run_coroutine_threadsafe(
+    #             self.memory.query_memory(query), self.loop
+    #         )
+    #         memory_str = future.result()
 
-            # self.logger.bind(tag=TAG).info(f"对话记录: {self.dialogue.get_llm_dialogue_with_memory(memory_str)}")
+    #         # self.logger.bind(tag=TAG).info(f"对话记录: {self.dialogue.get_llm_dialogue_with_memory(memory_str)}")
 
-            # 使用支持functions的streaming接口
-            llm_responses = self.llm.response_with_functions(
-                self.session_id,
-                self.dialogue.get_llm_dialogue_with_memory(memory_str),
-                functions=functions,
-            )
-        except Exception as e:
-            self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
-            return None
+    #         # 使用支持functions的streaming接口
+    #         llm_responses = self.llm.response_with_functions(
+    #             self.session_id,
+    #             self.dialogue.get_llm_dialogue_with_memory(memory_str),
+    #             functions=functions,
+    #         )
+    #     except Exception as e:
+    #         self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+    #         return None
 
-        self.llm_finish_task = False
-        text_index = 0
+    #     self.llm_finish_task = False
+    #     text_index = 0
 
-        # 处理流式响应
-        tool_call_flag = False
-        function_name = None
-        function_id = None
-        function_arguments = ""
-        content_arguments = ""
-        for response in llm_responses:
-            content, tools_call = response
-            if "content" in response:
-                content = response["content"]
-                tools_call = None
-            if content is not None and len(content) > 0:
-                if len(response_message) <= 0 and (
-                    content == "```" or "<tool_call>" in content
-                ):
-                    tool_call_flag = True
+    #     # 处理流式响应
+    #     tool_call_flag = False
+    #     function_name = None
+    #     function_id = None
+    #     function_arguments = ""
+    #     content_arguments = ""
+    #     for response in llm_responses:
+    #         content, tools_call = response
+    #         if "content" in response:
+    #             content = response["content"]
+    #             tools_call = None
+    #         if content is not None and len(content) > 0:
+    #             if len(response_message) <= 0 and (
+    #                 content == "```" or "<tool_call>" in content
+    #             ):
+    #                 tool_call_flag = True
 
-            if tools_call is not None:
-                tool_call_flag = True
-                if tools_call[0].id is not None:
-                    function_id = tools_call[0].id
-                if tools_call[0].function.name is not None:
-                    function_name = tools_call[0].function.name
-                if tools_call[0].function.arguments is not None:
-                    function_arguments += tools_call[0].function.arguments
+    #         if tools_call is not None:
+    #             tool_call_flag = True
+    #             if tools_call[0].id is not None:
+    #                 function_id = tools_call[0].id
+    #             if tools_call[0].function.name is not None:
+    #                 function_name = tools_call[0].function.name
+    #             if tools_call[0].function.arguments is not None:
+    #                 function_arguments += tools_call[0].function.arguments
 
-            if content is not None and len(content) > 0:
-                if tool_call_flag:
-                    content_arguments += content
-                else:
-                    response_message.append(content)
+    #         if content is not None and len(content) > 0:
+    #             if tool_call_flag:
+    #                 content_arguments += content
+    #             else:
+    #                 response_message.append(content)
 
-                    if self.client_abort:
-                        break
+    #                 if self.client_abort:
+    #                     break
 
-                    end_time = time.time()
-                    self.logger.bind(tag=TAG).debug(
-                        f"大模型返回时间: {end_time - start_time} 秒, 生成token={content}"
-                    )
+    #                 end_time = time.time()
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"大模型返回时间: {end_time - start_time} 秒, 生成token={content}"
+    #                 )
 
-                    # 处理文本分段和TTS逻辑
-                    # 合并当前全部文本并处理未分割部分
-                    full_text = "".join(response_message)
-                    current_text = full_text[processed_chars:]  # 从未处理的位置开始
+    #                 # 处理文本分段和TTS逻辑
+    #                 # 合并当前全部文本并处理未分割部分
+    #                 full_text = "".join(response_message)
+    #                 current_text = full_text[processed_chars:]  # 从未处理的位置开始
 
-                    # 查找最后一个有效标点
-                    punctuations = ("。", "？", "！", "；", "：")
-                    last_punct_pos = -1
-                    for punct in punctuations:
-                        pos = current_text.rfind(punct)
-                        if pos > last_punct_pos:
-                            last_punct_pos = pos
+    #                 # 查找最后一个有效标点
+    #                 punctuations = ("。", "？", "！", "；", "：")
+    #                 last_punct_pos = -1
+    #                 for punct in punctuations:
+    #                     pos = current_text.rfind(punct)
+    #                     if pos > last_punct_pos:
+    #                         last_punct_pos = pos
 
-                    # 找到分割点则处理
-                    if last_punct_pos != -1:
-                        segment_text_raw = current_text[: last_punct_pos + 1]
-                        segment_text = get_string_no_punctuation_or_emoji(
-                            segment_text_raw
-                        )
-                        if segment_text:
-                            text_index += 1
-                            self.logger.bind(tag=TAG).debug(
-                                f"[fc_chat] Found segment [{text_index}]: '{segment_text}'"
-                            )
-                            self.recode_first_last_text(segment_text, text_index)
-                            try:
-                                self.logger.bind(tag=TAG).debug(
-                                    f"[fc_chat] Submitting TTS task for index {text_index}..."
-                                )
-                                future = self.executor.submit(
-                                    self.speak_and_play, segment_text, text_index
-                                )
-                                self.logger.bind(tag=TAG).debug(
-                                    f"[fc_chat] Submitting future for index {text_index} to dispatcher..."
-                                )
-                                self.dispatcher.dispatch_tts(future)
-                                self.logger.bind(tag=TAG).debug(
-                                    f"[fc_chat] Dispatched TTS future for index {text_index}."
-                                )
-                                # 更新已处理字符位置
-                                processed_chars += len(segment_text_raw)
-                            except Exception as e:
-                                self.logger.bind(tag=TAG).error(
-                                    f"[fc_chat] Error submitting/dispatching TTS task for index {text_index}: {e}",
-                                    exc_info=True,
-                                )
+    #                 # 找到分割点则处理
+    #                 if last_punct_pos != -1:
+    #                     segment_text_raw = current_text[: last_punct_pos + 1]
+    #                     segment_text = get_string_no_punctuation_or_emoji(
+    #                         segment_text_raw
+    #                     )
+    #                     if segment_text:
+    #                         text_index += 1
+    #                         self.logger.bind(tag=TAG).debug(
+    #                             f"[fc_chat] Found segment [{text_index}]: '{segment_text}'"
+    #                         )
+    #                         self.recode_first_last_text(segment_text, text_index)
+    #                         try:
+    #                             self.logger.bind(tag=TAG).debug(
+    #                                 f"[fc_chat] Submitting TTS task for index {text_index}..."
+    #                             )
+    #                             future = self.executor.submit(
+    #                                 self.speak_and_play, segment_text, text_index
+    #                             )
+    #                             self.logger.bind(tag=TAG).debug(
+    #                                 f"[fc_chat] Submitting future for index {text_index} to dispatcher..."
+    #                             )
+    #                             self.dispatcher.dispatch_tts(future)
+    #                             self.logger.bind(tag=TAG).debug(
+    #                                 f"[fc_chat] Dispatched TTS future for index {text_index}."
+    #                             )
+    #                             # 更新已处理字符位置
+    #                             processed_chars += len(segment_text_raw)
+    #                         except Exception as e:
+    #                             self.logger.bind(tag=TAG).error(
+    #                                 f"[fc_chat] Error submitting/dispatching TTS task for index {text_index}: {e}",
+    #                                 exc_info=True,
+    #                             )
 
-        # 处理function call
-        if tool_call_flag:
-            bHasError = False
-            if function_id is None:
-                a = extract_json_from_string(content_arguments)
-                if a is not None:
-                    try:
-                        content_arguments_json = json.loads(a)
-                        function_name = content_arguments_json["name"]
-                        function_arguments = json.dumps(
-                            content_arguments_json["arguments"], ensure_ascii=False
-                        )
-                        function_id = str(uuid.uuid4().hex)
-                    except Exception as e:
-                        self.logger.bind(tag=TAG).error(f"function call error: {e}")
-                        bHasError = True
-                        response_message.append(a)
-                else:
-                    bHasError = True
-                    response_message.append(content_arguments)
-                if bHasError:
-                    self.logger.bind(tag=TAG).error(
-                        f"function call error: {content_arguments}"
-                    )
-                else:
-                    function_arguments = json.loads(function_arguments)
-            if not bHasError:
-                self.logger.bind(tag=TAG).info(
-                    f"function_name={function_name}, function_id={function_id}, function_arguments={function_arguments}"
-                )
-                function_call_data = {
-                    "name": function_name,
-                    "id": function_id,
-                    "arguments": function_arguments,
-                }
+    #     # 处理function call
+    #     if tool_call_flag:
+    #         bHasError = False
+    #         if function_id is None:
+    #             a = extract_json_from_string(content_arguments)
+    #             if a is not None:
+    #                 try:
+    #                     content_arguments_json = json.loads(a)
+    #                     function_name = content_arguments_json["name"]
+    #                     function_arguments = json.dumps(
+    #                         content_arguments_json["arguments"], ensure_ascii=False
+    #                     )
+    #                     function_id = str(uuid.uuid4().hex)
+    #                 except Exception as e:
+    #                     self.logger.bind(tag=TAG).error(f"function call error: {e}")
+    #                     bHasError = True
+    #                     response_message.append(a)
+    #             else:
+    #                 bHasError = True
+    #                 response_message.append(content_arguments)
+    #             if bHasError:
+    #                 self.logger.bind(tag=TAG).error(
+    #                     f"function call error: {content_arguments}"
+    #                 )
+    #             else:
+    #                 function_arguments = json.loads(function_arguments)
+    #         if not bHasError:
+    #             self.logger.bind(tag=TAG).info(
+    #                 f"function_name={function_name}, function_id={function_id}, function_arguments={function_arguments}"
+    #             )
+    #             function_call_data = {
+    #                 "name": function_name,
+    #                 "id": function_id,
+    #                 "arguments": function_arguments,
+    #             }
 
-                # 处理MCP工具调用
-                if self.mcp_manager.is_mcp_tool(function_name):
-                    result = self._handle_mcp_tool_call(function_call_data)
-                else:
-                    # 处理系统函数
-                    result = self.func_handler.handle_llm_function_call(
-                        self, function_call_data
-                    )
-                self._handle_function_result(result, function_call_data, text_index + 1)
+    #             # 处理MCP工具调用
+    #             if self.mcp_manager.is_mcp_tool(function_name):
+    #                 result = self._handle_mcp_tool_call(function_call_data)
+    #             else:
+    #                 # 处理系统函数
+    #                 result = self.func_handler.handle_llm_function_call(
+    #                     self, function_call_data
+    #                 )
+    #             self._handle_function_result(result, function_call_data, text_index + 1)
 
-        # 处理最后剩余的文本
-        full_text = "".join(response_message)
-        remaining_text = full_text[processed_chars:]
-        if remaining_text:
-            segment_text = get_string_no_punctuation_or_emoji(remaining_text)
-            if segment_text:
-                text_index += 1
-                self.logger.bind(tag=TAG).debug(
-                    f"[fc_chat] Found final segment [{text_index}]: '{segment_text}'"
-                )
-                self.recode_first_last_text(segment_text, text_index)
-                try:
-                    self.logger.bind(tag=TAG).debug(
-                        f"[fc_chat] Submitting final TTS task for index {text_index}..."
-                    )
-                    future = self.executor.submit(
-                        self.speak_and_play, segment_text, text_index
-                    )
-                    self.logger.bind(tag=TAG).debug(
-                        f"[fc_chat] Submitting final future for index {text_index} to dispatcher..."
-                    )
-                    self.dispatcher.dispatch_tts(future)
-                    self.logger.bind(tag=TAG).debug(
-                        f"[fc_chat] Dispatched final TTS future for index {text_index}."
-                    )
-                except Exception as e:
-                    self.logger.bind(tag=TAG).error(
-                        f"[fc_chat] Error submitting/dispatching final TTS task for index {text_index}: {e}",
-                        exc_info=True,
-                    )
+    #     # 处理最后剩余的文本
+    #     full_text = "".join(response_message)
+    #     remaining_text = full_text[processed_chars:]
+    #     if remaining_text:
+    #         segment_text = get_string_no_punctuation_or_emoji(remaining_text)
+    #         if segment_text:
+    #             text_index += 1
+    #             self.logger.bind(tag=TAG).debug(
+    #                 f"[fc_chat] Found final segment [{text_index}]: '{segment_text}'"
+    #             )
+    #             self.recode_first_last_text(segment_text, text_index)
+    #             try:
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"[fc_chat] Submitting final TTS task for index {text_index}..."
+    #                 )
+    #                 future = self.executor.submit(
+    #                     self.speak_and_play, segment_text, text_index
+    #                 )
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"[fc_chat] Submitting final future for index {text_index} to dispatcher..."
+    #                 )
+    #                 self.dispatcher.dispatch_tts(future)
+    #                 self.logger.bind(tag=TAG).debug(
+    #                     f"[fc_chat] Dispatched final TTS future for index {text_index}."
+    #                 )
+    #             except Exception as e:
+    #                 self.logger.bind(tag=TAG).error(
+    #                     f"[fc_chat] Error submitting/dispatching final TTS task for index {text_index}: {e}",
+    #                     exc_info=True,
+    #                 )
 
-        # 存储对话内容
-        if len(response_message) > 0:
-            self.dialogue.put(
-                Message(role="assistant", content="".join(response_message))
-            )
+    #     # 存储对话内容
+    #     if len(response_message) > 0:
+    #         self.dialogue.put(
+    #             Message(role="assistant", content="".join(response_message))
+    #         )
 
-        self.llm_finish_task = True
-        self.logger.bind(tag=TAG).debug(
-            json.dumps(self.dialogue.get_llm_dialogue(), indent=4, ensure_ascii=False)
-        )
+    #     self.llm_finish_task = True
+    #     self.logger.bind(tag=TAG).debug(
+    #         json.dumps(self.dialogue.get_llm_dialogue(), indent=4, ensure_ascii=False)
+    #     )
 
-        return True
+    #     return True
 
     def _handle_mcp_tool_call(self, function_call_data):
         function_arguments = function_call_data["arguments"]

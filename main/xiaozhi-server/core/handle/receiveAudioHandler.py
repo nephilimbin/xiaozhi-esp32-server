@@ -9,7 +9,7 @@ logger = setup_logging()
 
 
 async def handleAudioMessage(context, audio):
-    conn = context # Temporary alias
+    conn = context  # Temporary alias
     if not conn.asr_server_receive:
         logger.bind(tag=TAG).debug(f"前期数据处理中，暂停接收")
         return
@@ -59,10 +59,12 @@ async def startToChat(context, text):
     await send_stt_message(context, text)
     if context.use_function_call_mode:
         # 使用支持function calling的聊天方法
-        context.executor.submit(context.conn_handler.chat_with_function_calling, text)
-        logger.bind(tag=TAG).debug(f"Submitted chat_with_function_calling task for: {text}")
+        context.executor.submit(context.chat_with_function_calling, text)
+        logger.bind(tag=TAG).debug(
+            f"Submitted chat_with_function_calling task for: {text}"
+        )
     else:
-        context.executor.submit(context.conn_handler.chat, text)
+        context.executor.submit(context.chat, text)
         logger.bind(tag=TAG).debug(f"Submitted chat task for: {text}")
 
 

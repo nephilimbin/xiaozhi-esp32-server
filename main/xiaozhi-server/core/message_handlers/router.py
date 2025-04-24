@@ -32,3 +32,13 @@ class MessageRouter:
             f"Unknown message type for routing: {type(message)}"
         )
         return None
+
+    """消失类型分类"""
+
+    def classify_message(self, message):
+        """根据消息类型分类"""
+        if isinstance(message, str):
+            return str
+        elif isinstance(message, bytes):
+            return bytes
+        return "unknown"
