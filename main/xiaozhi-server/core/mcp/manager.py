@@ -12,11 +12,11 @@ TAG = __name__
 class MCPManager:
     """管理多个MCP服务的集中管理器"""
 
-    def __init__(self,conn) -> None:
+    def __init__(self,context) -> None:
         """
         初始化MCP管理器
         """
-        self.conn = conn
+        self.context = context
         self.logger = setup_logging()
         self.config_path = get_project_dir() + 'data/.mcp_server_settings.json'
         if not os.path.exists(self.config_path):
@@ -43,27 +43,30 @@ class MCPManager:
 
     async def initialize_servers(self) -> None:
         """初始化所有MCP服务"""
-        config = self.load_config()
-        for name, srv_config in config.items():
-            if not srv_config.get("command"):
-                self.logger.bind(tag=TAG).warning(f"Skipping server {name}: command not specified")
-                continue
+        try:
+            config = self.load_config()
+            for name, srv_config in config.items():
+                if not srv_config.get("command"):
+                    self.logger.bind(tag=TAG).warning(f"Skipping server {name}: command not specified")
+                    continue
 
-            try:
-                client = MCPClient(srv_config)
-                await client.initialize()
-                self.client[name] = client
-                self.logger.bind(tag=TAG).info(f"Initialized MCP client: {name}")
-                client_tools = client.get_available_tools()
-                self.tools.extend(client_tools)
-                for tool in client_tools:
-                    func_name = "mcp_"+tool["function"]["name"]
-                    register_function(func_name, tool, ToolType.MCP_CLIENT)(self.execute_tool)
-                    self.conn.func_handler.function_registry.register_function(func_name)
+                try:
+                    client = MCPClient(srv_config)
+                    await client.initialize()
+                    self.client[name] = client
+                    self.logger.bind(tag=TAG).info(f"Initialized MCP client: {name}")
+                    client_tools = client.get_available_tools()
+                    self.tools.extend(client_tools)
+                    for tool in client_tools:
+                        func_name = "mcp_"+tool["function"]["name"]
+                        register_function(func_name, tool, ToolType.MCP_CLIENT)(self.execute_tool)
+                        self.context.func_handler.function_registry.register_function(func_name)
 
-            except Exception as e:
-                self.logger.bind(tag=TAG).exception(f"Failed to initialize MCP server {name}: {e}")
-        self.conn.func_handler.upload_functions_desc()
+                except Exception as e:
+                    self.logger.bind(tag=TAG).exception(f"Failed to initialize MCP server {name}: {e}")
+            self.context.func_handler.upload_functions_desc()
+        except Exception as e:
+            self.logger.bind(tag=TAG).exception(f"Failed to initialize MCP servers: {e}")
 
     def get_all_tools(self) -> List[Dict[str, Any]]:
         """获取所有服务的工具function定义

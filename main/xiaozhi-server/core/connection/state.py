@@ -14,6 +14,7 @@ class StateManager:
         # No specific initialization needed for now
         pass
 
+
     async def load_private_config(
         self,
         headers: Dict[str, str],
@@ -80,13 +81,8 @@ class StateManager:
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to save memory: {e}", exc_info=True)
 
-# Placeholder load/save methods from the original plan (kept for reference, but logic moved)
-#    async def load(self, connection_id: str):
-#        # Placeholder - implement actual loading logic
-#        print(f"Placeholder: Loading state for {connection_id}")
-#        return {}
 
-#    async def save(self, connection_id: str, state_data: dict):
-#        # Placeholder - implement actual saving logic
-#        print(f"Placeholder: Saving state for {connection_id}")
-#        pass 
+
+
+
+

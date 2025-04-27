@@ -40,10 +40,7 @@ class TaskDispatcher:
     # Using Tuple[Any, ...] to represent the varied structures put into the audio queue
     def dispatch_audio(self, data_tuple: Tuple[Any, ...]):
         # 将包含音频数据和元数据的元组放入播放队列
-        # Expected formats include:
-        # (mp3_data, text, text_index, 'mp3')
-        # (opus_blob_with_len, text, text_index, 'opus_blob')
-        # (text_index, (opus_packets, response_text, text_index)) # from chat_async
+
         try:
             self.audio_queue.put_nowait(data_tuple)
         except queue.Full:

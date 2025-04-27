@@ -239,3 +239,5 @@ class PrivateConfig:
     def get_owner(self) -> Optional[str]:
         """获取设备当前所有者"""
         return self.private_config.get('owner')
+    
+    

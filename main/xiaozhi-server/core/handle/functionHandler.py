@@ -8,9 +8,9 @@ logger = setup_logging()
 
 
 class FunctionHandler:
-    def __init__(self, conn):
-        self.conn = conn
-        self.config = conn.config
+    def __init__(self, context):
+        self.context = context
+        self.config = context.config
         self.function_registry = FunctionRegistry()
         self.register_nessary_functions()
         self.register_config_functions()
@@ -61,12 +61,12 @@ class FunctionHandler:
             self.function_registry.register_function(func)
 
         """home assistant需要初始化提示词"""
-        append_devices_to_prompt(self.conn)
+        append_devices_to_prompt(self.context)
 
     def get_function(self, name):
         return self.function_registry.get_function(name)
 
-    def handle_llm_function_call(self, conn, function_call_data):
+    def handle_llm_function_call(self, context, function_call_data):
         try:
             function_name = function_call_data["name"]
             funcItem = self.get_function(function_name)
@@ -82,11 +82,11 @@ class FunctionHandler:
                 funcItem.type == ToolType.SYSTEM_CTL
                 or funcItem.type == ToolType.IOT_CTL
             ):
-                return func(conn, **arguments)
+                return func(context, **arguments)
             elif funcItem.type == ToolType.WAIT:
                 return func(**arguments)
             elif funcItem.type == ToolType.CHANGE_SYS_PROMPT:
-                return func(conn, **arguments)
+                return func(context, **arguments)
             else:
                 return ActionResponse(
                     action=Action.NOTFOUND, result="没有找到对应的函数", response=""

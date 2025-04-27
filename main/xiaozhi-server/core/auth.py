@@ -10,6 +10,15 @@ class AuthenticationError(Exception):
 
 
 class AuthMiddleware:
+    """认证中间件
+    1. 验证连接请求
+    2. 验证token
+    3. 验证设备白名单
+    4. 验证设备绑定状态
+    5. 验证设备认证码[todo]
+    """
+    
+    
     def __init__(self, config):
         self.config = config
         self.auth_config = config["server"].get("auth", {})
@@ -23,7 +32,7 @@ class AuthMiddleware:
             self.auth_config.get("allowed_devices", [])
         )
 
-    async def authenticate(self, headers):
+    async def start_authenticate(self, headers):
         """验证连接请求"""
         # 检查是否启用认证
         if not self.auth_config.get("enabled", False):
@@ -52,3 +61,4 @@ class AuthMiddleware:
     def get_token_name(self, token):
         """获取token对应的设备名称"""
         return self.tokens.get(token)
+

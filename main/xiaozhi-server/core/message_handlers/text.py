@@ -3,9 +3,9 @@ import json
 import asyncio
 from config.logger import setup_logging
 from core.handle.abortHandler import handleAbortMessage  # Keep old import for now
-from ..handle.helloHandler import handleHelloMessage  # Keep old import for now
-from ..utils.util import remove_punctuation_and_length
-from ..handle.receiveAudioHandler import (
+from core.handle.helloHandler import handleHelloMessage  # Keep old import for now
+from core.utils.util import remove_punctuation_and_length
+from core.handle.receiveAudioHandler import (
     startToChat,
     handleAudioMessage,
 )  # Keep old import for now
@@ -120,9 +120,6 @@ class TextMessageHandler(BaseMessageHandler):
                         enable_greeting = context.config.get("enable_greeting", True)
 
                         if is_wakeup_words and not enable_greeting:
-                            # Needs context for send functions
-                            # await send_stt_message(conn, text)
-                            # await send_tts_message(conn, "stop", None)
                             await send_stt_message(context, text)
                             await send_tts_message(context, "stop", None)
                         else:

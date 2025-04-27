@@ -10,48 +10,52 @@ TAG = __name__
 logger = setup_logging()
 
 
-async def handle_user_intent(conn, text):
-    # 检查是否有明确的退出命令
-    if await check_direct_exit(conn, text):
-        return True
-    # 检查是否是唤醒词
-    if await checkWakeupWords(conn, text):
-        return True
+async def handle_user_intent(context, text):
+    try:
+        # 检查是否有明确的退出命令
+        if await check_direct_exit(context, text):
+            return True
+        # 检查是否是唤醒词
+        if await checkWakeupWords(context, text):
+            return True
 
-    if conn.use_function_call_mode:
-        # 使用支持function calling的聊天方法,不再进行意图分析
+        if context.use_function_call_mode:
+            # 使用支持function calling的聊天方法,不再进行意图分析
+            return False
+        # 使用LLM进行意图分析
+        intent_result = await analyze_intent_with_llm(context, text)
+        if not intent_result:
+            return False
+        # 处理各种意图
+    except Exception as e:
+        logger.bind(tag=TAG).error(f"意图处理失败: {e}")
         return False
-    # 使用LLM进行意图分析
-    intent_result = await analyze_intent_with_llm(conn, text)
-    if not intent_result:
-        return False
-    # 处理各种意图
-    return await process_intent_result(conn, intent_result, text)
+    return await process_intent_result(context, intent_result, text)
 
 
-async def check_direct_exit(conn, text):
+async def check_direct_exit(context, text):
     """检查是否有明确的退出命令"""
     _, text = remove_punctuation_and_length(text)
-    cmd_exit = conn.cmd_exit
+    cmd_exit = context.cmd_exit
     for cmd in cmd_exit:
         if text == cmd:
             logger.bind(tag=TAG).info(f"识别到明确的退出命令: {text}")
-            await send_stt_message(conn, text)
-            await conn.close()
+            await send_stt_message(context, text)
+            await context.close()
             return True
     return False
 
 
-async def analyze_intent_with_llm(conn, text):
+async def analyze_intent_with_llm(context, text):
     """使用LLM分析用户意图"""
-    if not hasattr(conn, "intent") or not conn.intent:
+    if not hasattr(context, "intent") or not context.intent:
         logger.bind(tag=TAG).warning("意图识别服务未初始化")
         return None
 
     # 对话历史记录
-    dialogue = conn.dialogue
+    dialogue = context.dialogue
     try:
-        intent_result = await conn.intent.detect_intent(conn, dialogue.dialogue, text)
+        intent_result = await context.intent.detect_intent(context, dialogue.dialogue, text)
         return intent_result
     except Exception as e:
         logger.bind(tag=TAG).error(f"意图识别失败: {str(e)}")
@@ -59,7 +63,7 @@ async def analyze_intent_with_llm(conn, text):
     return None
 
 
-async def process_intent_result(conn, intent_result, original_text):
+async def process_intent_result(context, intent_result, original_text):
     """处理意图识别结果"""
     try:
         # 尝试将结果解析为JSON
@@ -88,13 +92,13 @@ async def process_intent_result(conn, intent_result, original_text):
                 "arguments": function_args,
             }
 
-            await send_stt_message(conn, original_text)
+            await send_stt_message(context, original_text)
 
             # 使用executor执行函数调用和结果处理
             def process_function_call():
-                conn.dialogue.put(Message(role="user", content=original_text))
-                result = conn.func_handler.handle_llm_function_call(
-                    conn, function_call_data
+                context.dialogue.put(Message(role="user", content=original_text))
+                result = context.func_handler.handle_llm_function_call(
+                    context, function_call_data
                 )
                 if result and function_name != "play_music":
                     # 获取当前最新的文本索引
@@ -103,20 +107,20 @@ async def process_intent_result(conn, intent_result, original_text):
                         text = result.result
                     if text is not None:
                         text_index = (
-                            conn.tts_last_text_index + 1
-                            if hasattr(conn, "tts_last_text_index")
+                            context.tts_last_text_index + 1
+                            if hasattr(context, "tts_last_text_index")
                             else 0
                         )
-                        conn.recode_first_last_text(text, text_index)
-                        future = conn.executor.submit(
-                            conn.speak_and_play, text, text_index
+                        context.recode_first_last_text(text, text_index)
+                        future = context.executor.submit(
+                            context.speak_and_play, text, text_index
                         )
-                        conn.llm_finish_task = True
-                        conn.tts_queue.put(future)
-                        conn.dialogue.put(Message(role="assistant", content=text))
+                        context.llm_finish_task = True
+                        context.tts_queue.put(future)
+                        context.dialogue.put(Message(role="assistant", content=text))
 
             # 将函数执行放在线程池中
-            conn.executor.submit(process_function_call)
+            context.executor.submit(process_function_call)
             return True
         return False
     except json.JSONDecodeError as e:

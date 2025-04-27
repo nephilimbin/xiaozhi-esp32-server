@@ -1,7 +1,8 @@
 from datetime import timedelta
 from typing import Optional
 from contextlib import AsyncExitStack
-import os, shutil
+import os
+import shutil
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -36,7 +37,7 @@ class MCPClient:
             args=args,
             env=env
         )
-        
+        # 使用asyncio.run_coroutine_threadsafe来运行stdio_client
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
         self.stdio, self.write = stdio_transport
         time_out_delta =  timedelta(seconds=15)
@@ -89,9 +90,6 @@ class MCPClient:
             self.logger.bind(tag=TAG).debug("AsyncExitStack closed successfully.")
         except RuntimeError as e:
             if "Attempted to exit cancel scope in a different task" in str(e):
-                # This specific error is often related to anyio's strict task scoping
-                # and might occur during cleanup if the cleanup task is different
-                # from the initialization task. Log as warning and continue.
                 self.logger.bind(tag=TAG).warning(
                     f"Ignoring expected anyio task mismatch error during stack cleanup: {e}"
                 )
