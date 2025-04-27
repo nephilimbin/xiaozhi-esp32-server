@@ -15,8 +15,8 @@ from core.channels.websocket import WebSocketChannel
 from concurrent.futures import ThreadPoolExecutor
 from core.auth import AuthMiddleware, AuthenticationError
 from core.utils.auth_code_gen import AuthCodeGenerator
-from .connection.state import StateManager
-from .connection.tasks import TaskDispatcher
+from core.connection.state import StateManager
+from core.connection.tasks import TaskDispatcher
 from core.message_handlers.context import HandlerContext
 
 

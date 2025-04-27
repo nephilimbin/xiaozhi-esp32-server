@@ -13,8 +13,8 @@ TAG = __name__
 class MessageRouter:
     def __init__(self):
         # Initialize handlers - potentially make these singletons or manage differently
-        self._text_handler = TextMessageHandler()
-        self._audio_handler = AudioMessageHandler()
+        self.text_handler = TextMessageHandler()
+        self.audio_handler = AudioMessageHandler()
         # Add other handlers if needed
 
     def route(self, message) -> BaseMessageHandler | None:
@@ -23,9 +23,9 @@ class MessageRouter:
         if isinstance(message, str):
             # Could add more logic here based on message content (e.g., JSON type field)
             # For now, assume string is text
-            return self._text_handler
+            return self.text_handler
         elif isinstance(message, bytes):
-            return self._audio_handler
+            return self.audio_handler
 
         # Return None or a default handler if type is unknown
         logger.bind(tag=TAG).warning(

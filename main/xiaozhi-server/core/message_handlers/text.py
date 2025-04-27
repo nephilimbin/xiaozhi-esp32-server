@@ -5,21 +5,20 @@ from config.logger import setup_logging
 from core.handle.abortHandler import handleAbortMessage  # Keep old import for now
 from core.handle.helloHandler import handleHelloMessage  # Keep old import for now
 from core.utils.util import remove_punctuation_and_length
-from core.handle.receiveAudioHandler import (
-    startToChat,
-    handleAudioMessage,
-)  # Keep old import for now
-from ..handle.sendAudioHandler import (
+# from core.handle.receiveAudioHandler import (
+#     startToChat,
+# ) 
+from core.handle.sendAudioHandler import (
     send_stt_message,
     send_tts_message,
-)  # Keep old import for now
-from ..handle.iotHandler import (
+)  
+from core.handle.iotHandler import (
     handleIotDescriptors,
     handleIotStatus,
-)  # Keep old import for now
-from ..channels.interface import ICommunicationChannel  # Keep old import for now
+)  
+from core.channels.interface import ICommunicationChannel 
 
-from .base import BaseMessageHandler
+from core.message_handlers.base import BaseMessageHandler
 
 
 TAG = __name__
@@ -129,7 +128,7 @@ class TextMessageHandler(BaseMessageHandler):
                             )
                             try:
                                 # await startToChat(conn, text)
-                                await startToChat(context, text)  # Pass context
+                                await context.router.audio_handler.startToChat(context, text)  # Pass context
                                 logger.bind(tag=TAG).debug(
                                     f"startToChat finished for text: '{text}'"
                                 )
@@ -191,10 +190,3 @@ async def handleAbortMessage(context, channel: ICommunicationChannel):
     context.client_speak_last_time = 0.0
     await channel.send_json({"type": "abort", "message": "ok"})
 
-
-# Note: send_stt_message, send_tts_message, startToChat, handleAudioMessage,
-# handleIotDescriptors, handleIotStatus are still imported from old locations.
-# They also need to be adapted to use context if called directly.
-# Ideally, logic from these should be moved into relevant handlers or services
-# accessible via the context (e.g., context.dispatcher, context.iot_service).
-# For now, we pass 'context' where 'conn' was expected, assuming attributes match.

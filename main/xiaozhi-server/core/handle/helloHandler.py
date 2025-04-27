@@ -1,4 +1,3 @@
-import json
 from config.logger import setup_logging
 from ..channels.interface import ICommunicationChannel
 from core.handle.sendAudioHandler import send_stt_message

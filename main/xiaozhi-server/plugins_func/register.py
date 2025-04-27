@@ -73,7 +73,7 @@ def register_function(name, desc, type=None):
     """注册函数到函数注册字典的装饰器"""
     def decorator(func):
         all_function_registry[name] = FunctionItem(name, desc, func, type)
-        logger.bind(tag=TAG).info(f"函数 '{name}' 已加载，可以注册使用")
+        # logger.bind(tag=TAG).info(f"函数 '{name}' 已加载，可以注册使用")
         return func
     return decorator
 

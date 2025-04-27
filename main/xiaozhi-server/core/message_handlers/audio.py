@@ -5,7 +5,9 @@ from core.utils.util import remove_punctuation_and_length
 from core.handle.sendAudioHandler import send_stt_message
 from core.handle.intentHandler import handle_user_intent
 from core.message_handlers.base import BaseMessageHandler
-# from core.message_handlers.context import HandlerContext
+import typing
+if typing.TYPE_CHECKING:
+    from core.message_handlers.context import HandlerContext
 
 TAG = __name__
 logger = setup_logging()
@@ -41,12 +43,13 @@ class AudioMessageHandler(BaseMessageHandler):
                 # Decide how to proceed, maybe assume no voice or re-raise? For now, log and continue
 
             logger.bind(tag=TAG).debug(f"[handle] Checking have_voice ({have_voice}) and context.client_have_voice ({context.client_have_voice})") # Log check
+            # 如果本次没有声音，本段也没声音，就把声音丢弃了
             if not have_voice and not context.client_have_voice:
                 logger.bind(tag=TAG).debug(f"[handle] Exiting early: No voice detected (VAD={have_voice}, client_state={context.client_have_voice}).") # Log check
-                # Avoid calling _no_voice_close_connect here if client explicitly started sending
+                # Avoid calling no_voice_close_connect here if client explicitly started sending
                 # self.asr_audio buffer is likely empty anyway if VAD says no voice on first chunks.
-                # Let's just append and rely on _no_voice_close_connect being called by subsequent silent chunks if needed.
-                # await self._no_voice_close_connect(context)
+                # Let's just append and rely on no_voice_close_connect being called by subsequent silent chunks if needed.
+                await self.no_voice_close_connect(context)
                 context.asr_audio.append(audio)
                 return
 
@@ -57,13 +60,12 @@ class AudioMessageHandler(BaseMessageHandler):
 
             # Check if client signaled stop
             logger.bind(tag=TAG).debug(f"[handle] Checking context.client_voice_stop: {context.client_voice_stop}") # Log before check
+            # 如果本段有声音，且已经停止了
             if context.client_voice_stop:
                 logger.bind(tag=TAG).debug("[handle] context.client_voice_stop is True. Starting ASR processing.") # Log processing start
                 context.client_abort = False
-
-            if context.client_voice_stop:
                 context.asr_server_receive = False
-
+                # 音频太短了，无法识别
                 if len(context.asr_audio) < 15:
                     context.asr_server_receive = True
                 else:
@@ -78,7 +80,7 @@ class AudioMessageHandler(BaseMessageHandler):
                         logger.bind(tag=TAG).info(f"识别文本: {text}")
                         text_len, _ = remove_punctuation_and_length(text)
                         if text_len > 0:
-                            await self._startToChat(context, text)
+                            await self.startToChat(context, text)
                         else:
                             # No valid text recognized
                             context.asr_server_receive = True
@@ -95,32 +97,32 @@ class AudioMessageHandler(BaseMessageHandler):
 
     # --- Helper methods adapted from original functions --- 
 
-    async def _startToChat(self, context, text):
+    async def startToChat(self, context: 'HandlerContext', text):
         """Initiates the chat flow after STT (adapted for context)"""
-        logger.bind(tag=TAG).debug(f"[_startToChat] Handling intent for: '{text}'")
+        logger.bind(tag=TAG).debug(f"[startToChat] Handling intent for: '{text}'")
         intent_handled = await handle_user_intent(context, text) 
 
         if intent_handled:
-            logger.bind(tag=TAG).debug(f"[_startToChat] Intent handled, skipping chat for: '{text}'")
+            logger.bind(tag=TAG).debug(f"[startToChat] Intent handled, skipping chat for: '{text}'")
             context.asr_server_receive = True
             return
 
-        logger.bind(tag=TAG).debug(f"[_startToChat] Sending STT message: '{text}'")
+        logger.bind(tag=TAG).debug(f"[startToChat] Sending STT message: '{text}'")
         await send_stt_message(context, text)
 
         # Submit chat task using context.conn_handler methods
         if context.use_function_call_mode:
-            logger.bind(tag=TAG).debug(f"[_startToChat] Submitting function calling chat task for: '{text}'")
+            logger.bind(tag=TAG).debug(f"[startToChat] Submitting function calling chat task for: '{text}'")
             context.executor.submit(context.chat_with_function_calling, text)
         else:
-            logger.bind(tag=TAG).debug(f"[_startToChat] Submitting standard chat task for: '{text}'")
+            logger.bind(tag=TAG).debug(f"[startToChat] Submitting standard chat task for: '{text}'")
             context.executor.submit(context.chat, text)
 
         # Ensure ASR is ready after submitting the task
         context.asr_server_receive = True
-        logger.bind(tag=TAG).debug("[_startToChat] Set asr_server_receive=True")
+        logger.bind(tag=TAG).debug("[startToChat] Set asr_server_receive=True")
 
-    async def _no_voice_close_connect(self, context):
+    async def no_voice_close_connect(self, context):
         """Handles logic for closing connection due to prolonged silence (uses context)"""
         # Remove conn = context alias
 
@@ -140,5 +142,7 @@ class AudioMessageHandler(BaseMessageHandler):
                 context.client_abort = False
                 context.asr_server_receive = False
                 prompt = '''请你以"时间过得真快"为开头，用富有感情、依依不舍的话来结束这场对话吧。'''
-                await self._startToChat(context, prompt)
+                await self.startToChat(context, prompt)
+
+
 

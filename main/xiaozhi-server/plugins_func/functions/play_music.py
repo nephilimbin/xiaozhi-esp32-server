@@ -106,6 +106,7 @@ def get_music_files(music_dir, music_ext):
                 # 添加相对路径
                 music_files.append(str(file.relative_to(music_dir)))
                 music_file_names.append(os.path.splitext(str(file.relative_to(music_dir)))[0])
+    logger.bind(tag=TAG).info(f"找到的音乐文件: {music_files}")
     return music_files, music_file_names
 
 
@@ -142,8 +143,7 @@ async def handle_music_command(conn, text):
     if os.path.exists(MUSIC_CACHE["music_dir"]):
         if time.time() - MUSIC_CACHE["scan_time"] > MUSIC_CACHE["refresh_time"]:
             # 刷新音乐文件列表
-            MUSIC_CACHE["music_files"], MUSIC_CACHE["music_file_names"] = get_music_files(MUSIC_CACHE["music_dir"],
-                                                                                          MUSIC_CACHE["music_ext"])
+            MUSIC_CACHE["music_files"], MUSIC_CACHE["music_file_names"] = get_music_files(MUSIC_CACHE["music_dir"],MUSIC_CACHE["music_ext"])
             MUSIC_CACHE["scan_time"] = time.time()
 
         potential_song = _extract_song_name(clean_text)
@@ -163,7 +163,7 @@ async def play_local_music(conn, specific_file=None):
     """播放本地音乐文件"""
     try:
         if not os.path.exists(MUSIC_CACHE["music_dir"]):
-            logger.bind(tag=TAG).error(f"音乐目录不存在: " + MUSIC_CACHE["music_dir"])
+            logger.bind(tag=TAG).error("音乐目录不存在: " + MUSIC_CACHE["music_dir"])
             return
 
         # 确保路径正确性
@@ -187,9 +187,12 @@ async def play_local_music(conn, specific_file=None):
         conn.llm_finish_task = True
         if music_path.endswith(".p3"):
             opus_packets, duration = p3.decode_opus_from_file(music_path)
+            logger.bind(tag=TAG).info("play_local_music: mp3")
+            conn.audio_play_queue.put((opus_packets, selected_music, 0, 'mp3'))
         else:
             opus_packets, duration = conn.tts.audio_to_opus_data(music_path)
-        conn.audio_play_queue.put((opus_packets, selected_music, 0))
+            logger.bind(tag=TAG).info("play_local_music: opus")
+            conn.audio_play_queue.put((opus_packets, selected_music, 0, 'opus'))
 
     except Exception as e:
         logger.bind(tag=TAG).error(f"播放音乐失败: {str(e)}")
