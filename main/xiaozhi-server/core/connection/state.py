@@ -77,11 +77,9 @@ class StateManager:
         try:
             logger.bind(tag=TAG).debug("Attempting to save memory.")
             await memory_module.save_memory(dialogue_history)
-            logger.bind(tag=TAG).info("Memory saved successfully.")
+            logger.bind(tag=TAG).info("Memory saved successfully:", dialogue_history)
         except Exception as e:
             logger.bind(tag=TAG).error(f"Failed to save memory: {e}", exc_info=True)
-
-
 
 
 

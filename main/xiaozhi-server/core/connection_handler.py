@@ -31,7 +31,7 @@ class TTSException(RuntimeError):
 class ConnectionHandler:
     def __init__(
         self,
-        websocket,
+        websocket: 'WebSocketChannel',
         config: Dict[str, Any],
         vad,
         asr,
@@ -54,8 +54,8 @@ class ConnectionHandler:
         self.logger = setup_logging()
         self.channel: Optional[ICommunicationChannel] = None
         self.auth = AuthMiddleware(config)
-        self.headers = None  # 私有属性
-        self.client_ip = None  # 私有属性
+        self.headers = None  # 私有属性，装在client_ip_info
+        self.client_ip = None  # 私有属性，包装在client_ip_info
         self.client_ip_info = {}
         self.session_id = None
         self.prompt = None
@@ -72,56 +72,18 @@ class ConnectionHandler:
         self.dispatcher = TaskDispatcher(
             self.loop, self.executor, self.tts_queue, self.audio_play_queue
         )
-        # self.router = MessageRouter()  # 消息路由器
-        self.state_manager = StateManager()  # 状态管理器
-
-        # 客户端状态相关
-        self.client_abort = False
-        self.client_listen_mode = "auto"
-
-        # vad相关变量
-        self.client_audio_buffer = bytearray()
-        self.client_have_voice = False
-        self.client_have_voice_last_time = 0.0
-        self.client_no_voice_last_time = 0.0
-        self.client_voice_stop = False
-
-        # asr相关变量
-        self.asr_audio = []
-        self.asr_server_receive = True
-
+        self._state_manager = StateManager()  # 状态管理器, 私有属性
+        
         # llm相关变量
         self.llm_finish_task = False
         self.dialogue = Dialogue()
+        self.close_after_chat = False  # 是否在聊天结束后关闭连接,暂时程序未用到
 
-        # tts相关变量
-        self.tts_first_text_index = -1
-        self.tts_last_text_index = -1
-
-        # iot相关变量
-        self.iot_descriptors = {}
-
-
-        # 函数调用相关变量
-        self.func_handler = None
-        self.use_function_call_mode = (
-            False
-            if self.config["selected_module"]["Intent"] != "function_call"
-            else True
-        )
-        self.mcp_manager = None
-
-        # 退出命令相关变量
-        # self.cmd_exit = self.config["exit_commands"]
-        # self.max_cmd_length = 0
-        # for cmd in self.cmd_exit:
-        #     if len(cmd) > self.max_cmd_length:
-        #         self.max_cmd_length = len(cmd)
         # 私有配置相关变量
         self.private_config = None
         self.auth_code_gen = AuthCodeGenerator.get_instance()
         self.is_device_verified = False  # 添加设备验证状态标志
-        self.close_after_chat = False  # 是否在聊天结束后关闭连接,暂时程序未用到
+
 
     def _create_handler_context(self) -> "HandlerContext":
         """Creates and populates the HandlerContext for message handlers."""
@@ -148,12 +110,11 @@ class ConnectionHandler:
             audio_play_queue=self.audio_play_queue,
             executor=self.executor,
             dispatcher=self.dispatcher,
-            # router=self.router,
-            # state_manager=self.state_manager,
+            llm_finish_task=self.llm_finish_task,
             dialogue=self.dialogue,
             close_after_chat=self.close_after_chat,
-            # conn_handler=self,
-        )  # 单个连接的上下文
+        )  
+        return self.contexter
 
     async def handle_connection(self):
         try:
@@ -161,9 +122,7 @@ class ConnectionHandler:
             self.headers = dict(self.websocket.request.headers)
             # 获取客户端ip地址
             self.client_ip = self.websocket.remote_address[0]
-            self.logger.bind(tag=TAG).info(
-                f"{self.client_ip} conn - Headers: {self.headers}"
-            )
+            self.logger.bind(tag=TAG).info(f"{self.client_ip} conn - Headers: {self.headers}")
 
             # 登陆进行认证
             await self.auth.start_authenticate(self.headers)
@@ -181,7 +140,7 @@ class ConnectionHandler:
             (
                 self.private_config,
                 self.is_device_verified,
-            ) = await self.state_manager.load_private_config(
+            ) = await self._state_manager.load_private_config(
                 self.headers, self.config, self.auth_code_gen
             )
             # 如果私有配置存在，则检查设备绑定状态
@@ -252,7 +211,7 @@ class ConnectionHandler:
         """保存记忆并关闭连接"""
         try:
             # Use StateManager to save memory
-            await self.state_manager.save_memory(self.memory, self.dialogue.dialogue)
+            await self._state_manager.save_memory(self.memory, self.dialogue.dialogue)
         except Exception as e:
             # Logging is now handled within save_memory, but keep high-level log
             self.logger.bind(tag=TAG).error(f"Error during save and close process: {e}")

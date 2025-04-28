@@ -15,7 +15,7 @@ logger = setup_logging()
 class AudioMessageHandler(BaseMessageHandler):
     """Handles incoming audio messages/data, adapted from original handleAudioMessage."""
 
-    async def handle(self, message, context):
+    async def handle(self, message, context: 'HandlerContext'):
         """Handles raw audio bytes using context."""
         try:
             audio = message
@@ -95,8 +95,6 @@ class AudioMessageHandler(BaseMessageHandler):
         except Exception as e:
             logger.bind(tag=TAG).error(f"AudioMessageHandler 处理错误: {e}", exc_info=True)
 
-    # --- Helper methods adapted from original functions --- 
-
     async def startToChat(self, context: 'HandlerContext', text):
         """Initiates the chat flow after STT (adapted for context)"""
         logger.bind(tag=TAG).debug(f"[startToChat] Handling intent for: '{text}'")
@@ -122,7 +120,7 @@ class AudioMessageHandler(BaseMessageHandler):
         context.asr_server_receive = True
         logger.bind(tag=TAG).debug("[startToChat] Set asr_server_receive=True")
 
-    async def no_voice_close_connect(self, context):
+    async def no_voice_close_connect(self, context: 'HandlerContext'):
         """Handles logic for closing connection due to prolonged silence (uses context)"""
         # Remove conn = context alias
 

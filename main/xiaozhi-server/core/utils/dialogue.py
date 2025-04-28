@@ -22,12 +22,13 @@ class Dialogue:
         self.dialogue.append(message)
 
     def getMessages(self, m, dialogue):
+        get_current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if m.tool_calls is not None:
-            dialogue.append({"role": m.role, "tool_calls": m.tool_calls})
+            dialogue.append({"role": m.role, "tool_calls": m.tool_calls, "current_time": get_current_time})
         elif m.role == "tool":
-            dialogue.append({"role": m.role, "tool_call_id": m.tool_call_id, "content": m.content})
+            dialogue.append({"role": m.role, "tool_call_id": m.tool_call_id, "content": m.content, "current_time": get_current_time})
         else:
-            dialogue.append({"role": m.role, "content": m.content})
+            dialogue.append({"role": m.role, "content": m.content, "current_time": get_current_time})
 
     def get_llm_dialogue(self) -> List[Dict[str, str]]:
         dialogue = []
@@ -55,8 +56,7 @@ class Dialogue:
         system_message = next(
             (msg for msg in self.dialogue if msg.role == "system"), None
         )
-
-
+        
         if system_message:
             enhanced_system_prompt = (
                 f"{system_message.content}\n\n"

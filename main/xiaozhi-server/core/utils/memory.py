@@ -2,7 +2,6 @@ import os
 import sys
 import importlib
 from config.logger import setup_logging
-from core.utils.util import read_config, get_project_dir
 
 logger = setup_logging()
 

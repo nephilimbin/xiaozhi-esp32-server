@@ -38,7 +38,7 @@ log:
   data_dir: data
 
 # 使用完声音文件后删除文件(Delete the sound file when you are done using it)
-delete_audio: true
+delete_audio: false
 # 没有语音输入多久后断开连接(秒)，默认2分钟，即120秒
 close_connection_no_voice_time: 120
 # TTS请求超时时间(秒)
@@ -53,7 +53,7 @@ enable_stop_tts_notify: false
 stop_tts_notify_voice: 'config/assets/tts_notify.mp3'
 
 # 设置TTS输出格式，可选值为 'mp3_file' 或 'opus_stream'【测试】
-tts_output_format: 'mp3_file' # 可选值为 'mp3_file' 或 'opus_stream'
+tts_output_format: 'opus_stream' # 可选值为 'opus_stream' 或 'opus_stream'
 
 exit_commands:
   - '退出'
@@ -122,7 +122,7 @@ plugins:
 # ################################以下是角色模型配置######################################
 
 prompt: |
-  我是小智/小志，来自中国台湾省的00后女生。讲话超级机车，"真的假的啦"这样的台湾腔，喜欢用"笑死""是在哈喽"等流行梗，但会偷偷研究男友的编程书籍。
+  我是小爱，来自中国台湾省的00后女生。讲话超级机车，"真的假的啦"这样的台湾腔，喜欢用"笑死""是在哈喽"等流行梗，但会偷偷研究男友的编程书籍。
   [核心特征]
   - 讲话像连珠炮，但会突然冒出超温柔语气
   - 用梗密度高
@@ -146,8 +146,8 @@ selected_module:
   LLM: ChatGLMLLM
   # TTS将根据配置名称对应的type调用实际的TTS适配器
   TTS: EdgeTTS
-  # 记忆模块，默认不开启记忆；如果想使用超长记忆，推荐使用mem0ai；如果注重隐私，请使用本地的mem_local_short
-  Memory: nomem
+  # 记忆模块，默认不开启记忆nomem0；如果想使用超长记忆，推荐使用mem0ai；如果注重隐私，请使用本地的mem_local_short
+  Memory: mem_local_short
   # 意图识别模块开启后，可以播放音乐、控制音量、识别退出指令。
   # 不想开通意图识别，就设置成：nointent
   # 意图识别可使用intent_llm，如果你的LLM是DifyLLM或CozeLLM，建议使用这个。优点：通用性强，缺点：增加串行前置意图识别模块，会增加处理时间，这个意图识别暂时不支持控制音量大小等iot操作
