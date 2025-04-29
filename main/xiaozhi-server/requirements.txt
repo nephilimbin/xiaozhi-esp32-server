@@ -26,3 +26,4 @@ mcp==1.4.1
 cnlunar==0.2.0
 PySocks==1.7.1
 psutil == 7.0.0
+pyaudio == 0.2.14

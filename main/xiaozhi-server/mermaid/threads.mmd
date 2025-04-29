@@ -1,96 +1,145 @@
 graph TD
-    %% --- Server Entry & Connection Setup ---
-    subgraph ServerCore ["Server Core (app.py, core/server.py)"]
-        direction LR
-        A["启动 main()"] --> B(创建主事件循环);
-        B --> C{启动 WebSocket Server};
-        C --> D[监听端口, 等待连接];
+    %% --- Server Initialization ---
+    subgraph App ["App (app.py)"]
+        A["启动 main()"] --> A1("加载配置")
+        A1 --> A2("创建 WebSocketServer 实例")
+        A2 --> A3("创建 VAD, ASR, LLM, TTS, Memory, Intent 实例")
+        A3 --> A4{"WebSocketServer.start()"}
+        A4 --> A5["监听端口, 等待连接"]
+        A5 --> Exit{"等待退出信号"}
+        Exit --> CloseServer("调用 WebSocketServer.close()")
+        CloseServer --> CloseHandlers("关闭所有 ConnectionHandler")
+        CloseHandlers --> CloseModules("关闭 VAD, ASR, ...")
+        CloseModules --> StopServer("关闭 WebSocket Server")
     end
 
-    %% --- Single Connection Lifecycle Management ---
-    subgraph ConnectionManager ["Connection Manager (core/connection/manager.py per connection)"]
+    %% --- Connection Handling --- 
+    subgraph ConnectionLifecycle ["Connection Lifecycle (WebSocketServer & ConnectionHandler)"]
         direction TB
-        D --> E{接受 WebSocket 连接};
-        E --> F[创建 WebSocketChannel];
-        F --> G["注入依赖: AuthMiddleware, Router, Dispatcher, StateManager"];
-        G --> H{"调用 AuthMiddleware.authenticate()"};
-        H -- "认证成功" --> I("加载状态 StateManager.load()");
-        I --> J(进入消息监听循环 async for);
-        J -- "收到消息" --> K{"调用 Router.route(message)"};
-        K -- "返回 Handler" --> L{"调用 Handler.handle(message, context)"};
-        L -- "正常处理" --> J;
-        J -- "连接关闭/异常" --> M{"保存状态 StateManager.save()"};
-        M --> N("关闭连接 channel.close()");
-        H -- "认证失败" --> N;
+        A5 -- 新连接 --> B["WebSocketServer._handle_connection(ws)"]
+        B --> C["创建 ConnectionHandler 实例"]
+        C --> D{"ConnectionHandler.handle_connection()"}
+        D --> E["获取 Headers"]
+        E --> F{"调用 AuthMiddleware.start_authenticate()"}
+        F -- 认证成功 --> G["创建 WebSocketChannel"]
+        G --> H{"调用 StateManager.load_private_config()"}
+        H -- "返回 PrivateConfig/None" --> I["可能更新 LLM/TTS 实例"]
+        I --> J("发送欢迎消息")
+        J --> K{"Dispatcher.dispatch_plugin_task(_initialize_components)"}
+        K --> L("创建 HandlerContext 实例")
+        L --> M("启动 TTS/Audio 播放后台线程")
+        M --> N["进入消息监听循环 async for message"]
+        N -- "收到消息" --> O{"HandlerContext._route_message(message)"}
+        O --> N
+        N -- "连接关闭/异常" --> P{"调用 _save_and_close()"}
+        P --> Q{"调用 StateManager.save_memory()"}
+        Q --> R("调用 ConnectionHandler.close()")
+        R --> S("清理资源, 关闭 Channel")
+        F -- "认证失败" --> R
     end
 
-    %% --- Authentication ---
-    subgraph AuthMiddlewareComponent ["Authentication (core/auth.py - AuthMiddleware)"]
-        AuthNode["authenticate(headers)"]
+    %% --- Message Routing & Processing (Within HandlerContext) ---
+    subgraph MessageProcessing ["HandlerContext Message Processing (core/message_handlers/*)"]
+        direction TB
+        O --> O1{"MessageRouter.route(message)"}
+        O1 -- "返回 TextHandler" --> O2["TextMessageHandler.handle(msg, ctx)"]
+        O1 -- "返回 AudioHandler" --> O3["AudioMessageHandler.handle(msg, ctx)"]
+        O2 --> O4{"调用 context.chat 或 context.chat_with_function_calling"}
+        O3 --> O5["处理 VAD/ASR 状态"]
+        O5 --> O4
+        O1 -- "返回 None" --> O99["记录警告"]
     end
 
-    %% --- Message Routing ---
-    subgraph Router ["Message Router (core/routing.py)"]
-        RouteNode["route(message) -> MessageHandler"]
+    %% --- Chat Logic (HandlerContext.chat*) ---
+    subgraph ChatLogic ["HandlerContext Chat Logic"]
+        direction TB
+        O4 --> CL1["添加 User Message 到 Dialogue"]
+        CL1 --> CL2{"调用 memory.query_memory() (async)"}
+        CL2 --> CL3{"调用 llm.response*() (stream)"}
+        CL3 -- "LLM Stream Chunk" --> CL4{"处理 Response"}
+        CL4 -- "Function Call?" --> FC1{"解析 Tool Call (name, args)"}
+        FC1 -- "Is MCP Tool?" --> MCP1{"调用 mcp_manager.execute_tool() (async)"}
+        FC1 -- "Is Plugin?" --> PF1{"调用 func_handler.handle_llm_function_call()"}
+        MCP1 --> FC2{"处理 MCP 结果"}
+        PF1 --> PF2{"处理 Plugin 结果"}
+        FC2 -- "需要再次调用 LLM?" --> CL3
+        PF2 -- "需要再次调用 LLM?" --> CL3
+        FC2 -- "直接回复?" --> TTS1
+        PF2 -- "直接回复?" --> TTS1
+        CL4 -- "Text Content" --> TTS1["分词并准备 TTS"]
+        TTS1 --> TTS2{"调用 speak_and_play() -> Future"}
+        TTS2 --> TTS3{"dispatcher.dispatch_tts(Future)"}
+        CL3 -- "Stream End" --> CL5["添加 Assistant Message 到 Dialogue"]
+        CL5 --> EndChatLogic("结束 Chat 处理")
+        TTS3 --> EndChatLogic
     end
 
-    %% --- Message Handling ---
-    subgraph Handlers ["Message Handlers (core/message_handlers/*)"]
+    %% --- TTS & Audio Playback Threads (HandlerContext Methods) ---
+    subgraph BackgroundThreads ["Background TTS & Audio Threads"]
         direction LR
-        HandlerBase["BaseMessageHandler.handle()"];
-        TextHandler["TextMessageHandler"];
-        AudioHandler["AudioMessageHandler"];
-        %% ... other handlers ...
-        HandlerBase --> TextHandler;
-        HandlerBase --> AudioHandler;
-        TextHandler -- "调用插件/TTS" --> TaskDisp;
-        AudioHandler -- "可能调用" --> TaskDisp;
+        subgraph TTSThread ["TTS Thread (_tts_priority_thread)"]
+            TTSQ["tts_queue.get() -> Future"]
+            TTSQ --> TTSRes{"Future.result() -> (file, text, index)"}
+            TTSRes --> TTSProc["处理/转换音频 (Opus/MP3)"]
+            TTSProc --> TTSDispatch{"dispatcher.dispatch_audio(audio_data)"}
+        end
+        subgraph AudioThread ["Audio Playback Thread (_audio_play_priority_thread)"]
+            AudioQ["audio_play_queue.get() -> (data, text, index, type)"]
+            AudioQ --> AudioSend{"发送音频数据"}
+            AudioSend -- Opus --> SendOpus["调用 sendAudioMessage()"]
+            AudioSend -- MP3 --> SendMP3["发送 MP3 (start, data, end)"]
+            SendOpus --> ChannelSend
+            SendMP3 --> ChannelSend
+        end
+        ChannelSend["WebSocketChannel.send_*()"]
     end
 
-    %% --- Task Dispatching ---
-    subgraph TaskDispatcher ["Task Dispatcher (core/connection/tasks.py)"]
-        TaskDisp["dispatch_plugin(tool_name, args)"];
-        TaskDisp --> PluginExecQueue("Plugin Executor");
-        TaskDisp --> TTSQueue("TTS Queue");
-        TaskDisp --> AudioQueue("Audio Playback Queue");
-    end
+    %% --- Dependencies & Data Flow ---
+    %% Server -> Connection
+    App -- "creates" --> WebSocketServer
+    WebSocketServer -- "creates" --> ConnectionHandler
+    ConnectionHandler --> HandlerContext
 
-    %% --- State Management ---
-    subgraph StateManager ["State Manager (core/connection/state.py)"]
-        LoadState["load()"]
-        SaveState["save()"]
-    end
+    %% Connection -> Components
+    ConnectionHandler --> AuthMiddleware
+    ConnectionHandler --> StateManager
+    ConnectionHandler --> TaskDispatcher
+    ConnectionHandler --> Dialogue
 
-    %% --- Background Execution (Similar to before, but triggered differently) ---
-    subgraph BackgroundExecution ["Threading & Async Execution"]
-        direction LR
-        PluginExecQueue -- 任务 --> Executor[ThreadPoolExecutor];
-        TTSQueue -- 任务 --> TTSThread["TTS Thread"];
-        AudioQueue -- 任务 --> AudioThread["Audio Playback Thread"];
+    %% Context -> Components
+    HandlerContext --> MessageRouter
+    HandlerContext --> Dialogue
+    HandlerContext --> FunctionHandler
+    HandlerContext --> MCPManager
+    HandlerContext --> LLM
+    HandlerContext --> TTS
+    HandlerContext --> Memory
+    HandlerContext --> TaskDispatcher
+    HandlerContext --> WebSocketChannel
 
-        Executor -- "完成/需交互" --> RunExecAsync(run_coroutine_threadsafe);
-        TTSThread -- "完成/需交互" --> RunTTSAsync(run_coroutine_threadsafe);
-        AudioThread -- "需交互" --> RunAudioAsync(run_coroutine_threadsafe);
+    %% Chat Flow
+    MessageProcessing --> ChatLogic
+    ChatLogic -- "via dispatcher" --> BackgroundThreads
+    BackgroundThreads --> WebSocketChannel
 
-        RunExecAsync --> B;
-        RunTTSAsync --> B;
-        RunAudioAsync --> B;
-    end
+    %% State Flow
+    ConnectionLifecycle -- "load/save" --> StateManager
 
+    %% Function/MCP Flow
+    ChatLogic --> FunctionHandler
+    ChatLogic --> MCPManager
+    FunctionHandler <-- "registers tools" .. MCPManager
+    MCPManager --> MCPClient
 
-    %% --- Dependencies & Interactions ---
-    G --> AuthMiddlewareComponent;
-    G --> Router;
-    G --> TaskDispatcher;
-    G --> StateManager;
+    %% Style Definitions (Optional)
+    classDef server fill:#f9f,stroke:#333,stroke-width:2px
+    classDef connection fill:#ccf,stroke:#333,stroke-width:1px
+    classDef context fill:#cfc,stroke:#333,stroke-width:1px
+    classDef component fill:#eee,stroke:#666,stroke-width:1px
+    classDef thread fill:#ffc,stroke:#996,stroke-width:1px
 
-    K --> Router;
-    L --> Handlers;
-
-    %% Styling (Optional)
-    classDef component fill:#cff,stroke:#333,stroke-width:1px;
-    classDef thread fill:#f9f,stroke:#333,stroke-width:1px;
-    classDef queue fill:#ffc,stroke:#333,stroke-width:1px;
-    class ConnectionManager,AuthMiddlewareComponent,Router,Handlers,TaskDispatcher,StateManager component;
-    class TTSThread,AudioThread thread;
-    class PluginExecQueue,TTSQueue,AudioQueue queue;
+    class App,WebSocketServer server
+    class ConnectionLifecycle,ConnectionHandler connection
+    class MessageProcessing,ChatLogic,HandlerContext context
+    class BackgroundThreads,TTSThread,AudioThread thread
+    class AuthMiddleware,StateManager,TaskDispatcher,Dialogue,MessageRouter,FunctionHandler,MCPManager,LLM,TTS,Memory,VAD,ASR,Intent,WebSocketChannel component

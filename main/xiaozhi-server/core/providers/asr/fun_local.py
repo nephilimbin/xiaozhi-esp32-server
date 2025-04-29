@@ -75,9 +75,7 @@ class ASRProvider(ASRProviderBase):
 
         return file_path
 
-    async def speech_to_text(
-        self, opus_data: List[bytes], session_id: str
-    ) -> Tuple[Optional[str], Optional[str]]:
+    async def speech_to_text(self, opus_data: List[bytes], session_id: str) -> Tuple[Optional[str], Optional[str]]:
         """语音转文本主处理逻辑"""
         file_path = None
         try:

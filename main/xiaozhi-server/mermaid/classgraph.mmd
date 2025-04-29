@@ -1,114 +1,281 @@
 classDiagram
     direction LR
 
+    %% --- Core Server & Connection ---
+    class App {
+        +main()
+    }
     class WebSocketServer {
+        -config: dict
+        -active_connections: set<ConnectionHandler>
+        -server: websockets.Server
+        -_vad, _asr, _llm, _tts, _memory, _intent: Any
+        +__init__(config)
         +start()
-        +handle_new_connection(websocket)
+        +close()
+        -_create_processing_instances()
+        -_handle_connection(websocket)
     }
-
-    class ConnectionManager {
-        -channel: WebSocketChannel %% Changed from websocket: WebSocketWrapper
-        -auth_middleware: AuthMiddleware %% Changed from authenticator: Authenticator
-        -router: MessageRouter
+    class ConnectionHandler {
+        -websocket: WebSocketChannel
+        -config: dict
+        -vad, asr, llm, tts, memory, intent: Any
+        -channel: WebSocketChannel
+        -auth: AuthMiddleware
+        -session_id: str
+        -loop: AbstractEventLoop
+        -stop_event: threading.Event
+        -tts_queue: queue.Queue
+        -audio_play_queue: queue.Queue
+        -executor: ThreadPoolExecutor
         -dispatcher: TaskDispatcher
-        -state_manager: StateManager
-        +manage_connection() void
-        -receive_messages() void %% This might live here conceptually before step 8
+        -_state_manager: StateManager
+        -dialogue: Dialogue
+        -contexter: HandlerContext
+        +__init__(websocket, config, ...)
+        +handle_connection()
+        +close()
+        -_create_handler_context() HandlerContext
+        -_initialize_components()
+        -_save_and_close()
+    }
+    class WebSocketChannel {
+        <<Interface>> ICommunicationChannel
+        -ws: websockets.WebSocketServerProtocol
+        +send_message(data: dict)
+        +send_bytes(data: bytes)
+        +receive() Any
+        +close()
+    }
+    class AuthMiddleware {
+        -config: dict
+        +__init__(config)
+        +start_authenticate(headers)
     }
 
-    class WebSocketChannel { %% Renamed from WebSocketWrapper
-        -ws: WebSocketConnection
-        +send_json(data: dict) void
-        +send_text(text: str) void
-        +send_message(message: dict) void %% Added based on your code
-        +send_raw_string(text: str) void %% Added based on your code
-        +receive() Any %% Added per discussion, might not be fully used until Step 8
-        +close() void %% Added per discussion, might not be fully used until Step 8
+    %% --- State & Tasks ---
+    class StateManager {
+        +load_private_config(headers, config, auth_code_gen) (PrivateConfig, bool)
+        +save_memory(memory_module, dialogue_history)
+    }
+    class PrivateConfig {
+        -device_id: str
+        -config: dict
+        -auth_code_gen: AuthCodeGenerator
+        +load_or_create()
+        +get_owner() str | None
+        +create_private_instances() (LLM, TTS) | (None, None)
+        +update_last_chat_time()
+    }
+    class TaskDispatcher {
+        -loop: AbstractEventLoop
+        -executor: ThreadPoolExecutor
+        -tts_queue: queue.Queue
+        -audio_queue: queue.Queue
+        +dispatch_plugin_task(func, *args) Future
+        +dispatch_tts(future: Future)
+        +dispatch_audio(data_tuple: tuple)
+    }
+    class Dialogue {
+        -dialogue: list<Message>
+        +put(message: Message)
+        +get_llm_dialogue() list
+        +get_llm_dialogue_with_memory(memory_str) list
+        +update_system_message(prompt)
+    }
+    class Message {
+        +role: str
+        +content: str | None
+        +tool_calls: list | None
+        +tool_call_id: str | None
     }
 
-    class AuthMiddleware { %% Renamed from Authenticator
-        +authenticate(headers: dict) bool
-        +get_token_name(token: str) str %% Added based on your code
+    %% --- Message Handling & Context ---
+    class HandlerContext {
+        %% Holds all components & state for message processing
+        +vad, asr, llm, tts, memory, intent: Any
+        +config, websocket, logger, channel: Any
+        +session_id, prompt: str
+        +loop, stop_event, tts_queue, audio_play_queue, executor, dispatcher: Any
+        +router: MessageRouter
+        +dialogue: Dialogue
+        +func_handler: FunctionHandler
+        +mcp_manager: MCPManager
+        %% Client state vars...
+        +__post_init__()
+        +reset_vad_states()
+        +_route_message(message)
+        +chat(query)
+        +chat_with_function_calling(query, tool_call=False)
+        +speak_and_play(text, index) (str|None, str, int)
+        +_tts_priority_thread() %% Runs in background
+        +_audio_play_priority_thread() %% Runs in background
+        +_handle_mcp_tool_call(call_data) ActionResponse
+        +_handle_function_result(result, call_data, index)
     }
-
     class MessageRouter {
-        +route(message: Any) BaseMessageHandler
+        +route(message) BaseMessageHandler | None
+        +classify_message(message) type | str | None %% Internal helper?
     }
-
     class BaseMessageHandler {
         <<Interface>>
-        +handle(message: Any, context: HandlerContext) void
+        +handle(message, context: HandlerContext)
     }
-
     class TextMessageHandler {
-        +handle(message: Any, context: HandlerContext) void
+        +handle(message, context: HandlerContext)
     }
-
     class AudioMessageHandler {
-        +handle(message: Any, context: HandlerContext) void
+        +handle(message, context: HandlerContext)
     }
-    %% Potentially other handlers like ControlMessageHandler
-
-    class HandlerContext {
-        %% Object passed to handlers containing dependencies
-        +dispatcher: TaskDispatcher
-        +channel: WebSocketChannel %% Changed from websocket: WebSocketWrapper
-        +state_manager: StateManager
-        %% ... other needed context ...
+    class sendAudioMessage {
+         %% Likely a function, not a class
+         +sendAudioMessage(context, data, text, index)
     }
 
-    class TaskDispatcher {
-        -executor: ThreadPoolExecutor
-        -tts_queue: Queue
-        -audio_queue: Queue
-        -loop: AbstractEventLoop
-        +dispatch_plugin_task(func, *args) Future
-        +dispatch_tts(text: str) void
-        +dispatch_audio(audio_data: Any) void
+
+    %% --- Core Processing Modules (Interfaces/Placeholders) ---
+    class VAD { <<Interface>> }
+    class ASR { <<Interface>> }
+    class LLM {
+        <<Interface>>
+        +response(session_id, dialogue) iterator
+        +response_with_functions(session_id, dialogue, functions) iterator
+    }
+    class TTS {
+        <<Interface>>
+        +to_tts(text) str | None %% Returns audio file path
+        +audio_to_opus_data(file_path) (list[bytes], float)
+    }
+    class Memory {
+        <<Interface>>
+        +init_memory(device_id, llm)
+        +query_memory(query) str
+        +save_memory(dialogue_history)
+    }
+    class Intent {
+        <<Interface>>
+        %% Methods for intent detection if not using function calling
     }
 
-    class StateManager {
-        +load(connection_id: str) State %% Define State type if possible
-        +save(connection_id: str, state: State) void %% Define State type if possible
+
+    %% --- Function/Plugin Handling ---
+    class FunctionHandler {
+        -context: HandlerContext
+        -function_registry: FunctionRegistry
+        +__init__(context)
+        +get_functions() list[dict]
+        +handle_llm_function_call(context, call_data) ActionResponse
+        +upload_functions_desc()
+    }
+    class FunctionRegistry {
+         %% Manages registered functions internally
+         +register_function(name)
+    }
+    class register_function {
+        %% Decorator
+        +register_function(name, schema, type)
+    }
+    class ActionResponse {
+        +action: Action
+        +result: str
+        +response: str
+    }
+    class Action {
+        <<enumeration>>
+        RESPONSE
+        REQLLM
+        NOTFOUND
     }
 
-    class TTSThread {
-        -tts_queue: Queue
-        -loop: AbstractEventLoop
-        +run() void
-        -process_tts_task(text) void
+    %% --- MCP (External Tools) ---
+    class MCPManager {
+        -context: HandlerContext
+        -client: dict<str, MCPClient>
+        -tools: list<dict>
+        +__init__(context)
+        +initialize_servers()
+        +get_all_tools() list[dict]
+        +is_mcp_tool(tool_name) bool
+        +execute_tool(tool_name, arguments) Any %% Registered as function handler
+    }
+    class MCPClient {
+        -config: dict
+        +initialize()
+        +get_available_tools() list[dict]
+        +has_tool(tool_name) bool
+        +call_tool(tool_name, arguments) Any
+        +cleanup()
     }
 
-    class AudioPlaybackThread {
-        -audio_queue: Queue
-        -loop: AbstractEventLoop
-        +run() void
-        -process_audio_task(audio_data) void
-    }
 
-    WebSocketServer --> ConnectionManager : creates
-    ConnectionManager o-- WebSocketChannel : uses %% Changed
-    ConnectionManager o-- AuthMiddleware : uses %% Changed
-    ConnectionManager o-- MessageRouter : uses
-    ConnectionManager o-- TaskDispatcher : uses (via context)
-    ConnectionManager o-- StateManager : uses
+    %% --- Relationships ---
+    App --> WebSocketServer : creates and runs
+    WebSocketServer --> ConnectionHandler : creates per connection
+    WebSocketServer o-- VAD : uses
+    WebSocketServer o-- ASR : uses
+    WebSocketServer o-- LLM : uses
+    WebSocketServer o-- TTS : uses
+    WebSocketServer o-- Memory : uses
+    WebSocketServer o-- Intent : uses
 
-    ConnectionManager ..> BaseMessageHandler : receives from Router
-    MessageRouter ..> BaseMessageHandler : returns
+    ConnectionHandler o-- WebSocketChannel : uses (as channel)
+    ConnectionHandler o-- AuthMiddleware : uses
+    ConnectionHandler o-- TaskDispatcher : creates & uses
+    ConnectionHandler o-- StateManager : creates & uses
+    ConnectionHandler o-- Dialogue : creates & uses
+    ConnectionHandler --> HandlerContext : creates & uses
 
-    BaseMessageHandler <|-- TextMessageHandler : implements
-    BaseMessageHandler <|-- AudioMessageHandler : implements
+    HandlerContext o-- MessageRouter : creates & uses
+    HandlerContext o-- Dialogue : uses
+    HandlerContext o-- FunctionHandler : creates & uses
+    HandlerContext o-- MCPManager : creates & uses
+    HandlerContext o-- VAD : uses
+    HandlerContext o-- ASR : uses
+    HandlerContext o-- LLM : uses
+    HandlerContext o-- TTS : uses
+    HandlerContext o-- Memory : uses
+    HandlerContext o-- Intent : uses
+    HandlerContext o-- TaskDispatcher : uses
+    HandlerContext o-- WebSocketChannel : uses (as channel)
+    HandlerContext ..> ThreadPoolExecutor : submits tasks via Dispatcher/self.executor
 
-    TextMessageHandler ..> HandlerContext : uses
-    AudioMessageHandler ..> HandlerContext : uses
-    TextMessageHandler ..> TaskDispatcher : uses (via context)
-    AudioMessageHandler ..> TaskDispatcher : uses (via context)
+    %% Message Handling Flow
+    HandlerContext --> MessageRouter : routes message
+    MessageRouter --> BaseMessageHandler : returns handler
+    BaseMessageHandler <|-- TextMessageHandler
+    BaseMessageHandler <|-- AudioMessageHandler
+    TextMessageHandler ..> HandlerContext : calls methods (chat*)
+    AudioMessageHandler ..> HandlerContext : calls methods (VAD handling, chat*)
 
-    TaskDispatcher ..> TTSThread : puts on queue
-    TaskDispatcher ..> AudioPlaybackThread : puts on queue
-    TaskDispatcher ..> ThreadPoolExecutor : submits task
+    %% Chat & Function Call Flow
+    HandlerContext --> LLM : calls response*
+    HandlerContext --> Memory : calls query_memory
+    HandlerContext --> FunctionHandler : calls handle_llm_function_call
+    HandlerContext --> MCPManager : calls execute_tool (indirectly via FunctionHandler)
+    FunctionHandler <.. MCPManager : registers MCP tools
+    FunctionHandler o-- FunctionRegistry : uses
+    MCPManager o-- MCPClient : manages
+    HandlerContext --> TaskDispatcher : dispatch_tts(future)
+    HandlerContext --> ThreadPoolExecutor : submit(speak_and_play)
 
-    %% Conceptual representation of async interaction
-    TTSThread ..> asyncio : run_coroutine_threadsafe
-    AudioPlaybackThread ..> asyncio : run_coroutine_threadsafe
-    ThreadPoolExecutor ..> asyncio : run_coroutine_threadsafe
+    %% TTS/Audio Flow
+    TaskDispatcher --> queue.Queue : (tts_queue) puts Future
+    HandlerContext --> queue.Queue : (audio_play_queue) reads from (via _tts_priority_thread & dispatcher)
+    HandlerContext --> queue.Queue : (tts_queue) reads from (via _audio_play_priority_thread)
+    HandlerContext --> sendAudioMessage : calls
+    HandlerContext --> TTS : calls to_tts, audio_to_opus_data
+    HandlerContext --> WebSocketChannel : sends audio
+
+    %% State Management
+    ConnectionHandler --> StateManager : load_private_config
+    ConnectionHandler --> StateManager : save_memory (via context.memory)
+    StateManager --> PrivateConfig : creates/loads
+    StateManager --> Memory : calls save_memory
+
+    %% Authentication
+    ConnectionHandler --> AuthMiddleware : start_authenticate
+    ConnectionHandler --> PrivateConfig : uses (checks owner, gets instances)
+
+
+    %% Interfaces/Implementations
+    ICommunicationChannel <|-- WebSocketChannel
