@@ -134,13 +134,13 @@ selected_module:
   # 语音活动检测模块，默认使用SileroVAD模型
   VAD: SileroVAD
   # 语音识别模块，默认使用FunASR本地模型
-  ASR: FunASR
+  ASR: FunASR_Docker
   # 将根据配置名称对应的type调用实际的LLM适配器
   LLM: ChatGLMLLM
   # TTS将根据配置名称对应的type调用实际的TTS适配器
   TTS: EdgeTTS
-  # 记忆模块，默认不开启记忆nomem0；如果想使用超长记忆，推荐使用mem0ai；如果注重隐私，请使用本地的mem_local_short
-  Memory: mem_local_short
+  # 记忆模块，默认不开启记忆nomem；如果想使用超长记忆，推荐使用mem0ai；如果注重隐私，请使用本地的mem_local_short
+  Memory: nomem
   # 意图识别模块开启后，可以播放音乐、控制音量、识别退出指令。
   # 不想开通意图识别，就设置成：nointent
   # 意图识别可使用intent_llm，如果你的LLM是DifyLLM或CozeLLM，建议使用这个。优点：通用性强，缺点：增加串行前置意图识别模块，会增加处理时间，这个意图识别暂时不支持控制音量大小等iot操作
@@ -200,7 +200,7 @@ ASR:
     output_dir: tmp/
   FunASR_Docker:
     type: funasr_docker
-    model_dir: models/SenseVoiceSmall
+    base_url: wss://127.0.0.1:10095
     output_dir: tmp/
   SherpaASR:
     type: sherpa_onnx_local

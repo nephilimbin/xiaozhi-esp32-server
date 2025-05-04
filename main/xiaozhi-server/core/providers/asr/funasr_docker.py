@@ -1,61 +1,83 @@
 # -*- encoding: utf-8 -*-
 import os
+# --- Start: Add project root to sys.path ---
+# import sys # Comment out sys.path modification
+# import pathlib
+#
+# # Get the absolute path of the current script
+# script_path = pathlib.Path(__file__).resolve()
+# # Get the directory containing the script (asr)
+# script_dir = script_path.parent
+# # Get the path to the project root (main/xiaozhi-server) by going up two levels
+# project_root = script_dir.parent.parent.parent
+# # Add the project root to sys.path
+# sys.path.insert(0, str(project_root))
+# --- End: Add project root to sys.path ---
+
 import websockets
 import ssl
 import asyncio
 import json
-import logging
+# import logging # Use standard logging <-- Remove standard logging
 from typing import Optional, Tuple, List, Dict, Any
-import wave
+import wave # <-- Remove comment
 import time
-# from core.providers.asr.base import ASRProviderBase
-from config.logger import setup_logging
+from urllib.parse import urlparse # <-- Add urlparse
+import opuslib_next # <-- Add opuslib
+import uuid # <-- Add uuid
+
+from .base import ASRProviderBase # <-- Restore base class import
+from config.logger import setup_logging # <-- Restore project logger import
 
 TAG = "FunasrDockerASRProvider"
-logger = setup_logging()
+logger = setup_logging() # <-- Use project logger
 
 
-class ASRProvider():
+# class ASRProvider(): # Keep base class commented out
+class ASRProvider(ASRProviderBase):
     """
     ASRProvider implementation using FunASR Docker via WebSocket.
     Connects to a running FunASR WebSocket server to perform speech-to-text.
+    Processes Opus audio data.
     """
 
-    def __init__(self, config: Dict[str, Any], delete_audio_file: bool = False):
+    def __init__(self, config: Dict[str, Any], delete_audio_file: bool = False): # delete_audio_file might be unused here
         """
         Initializes the FunASR Docker ASR provider.
 
         Args:
-            config (Dict[str, Any]): Configuration dictionary containing parameters like:
-                - host (str): Host IP of the FunASR WebSocket server.
-                - port (int): Port of the FunASR WebSocket server.
-                - mode (str): ASR mode ("offline", "online", "2pass"). Defaults to "2pass".
-                - chunk_size (List[int]): Chunk sizes. Defaults to [5, 10, 5].
-                - chunk_interval (int): Chunk interval. Defaults to 10.
-                - encoder_chunk_look_back (int): Encoder chunk look back. Defaults to 4.
-                - decoder_chunk_look_back (int): Decoder chunk look back. Defaults to 0.
-                - hotword (str): Hotword file path or string. Defaults to "".
-                - use_itn (bool): Whether to use Inverse Text Normalization. Defaults to True.
-                - ssl (bool): Whether to use SSL for connection. Defaults to True.
-                - output_dir (str, optional): Directory to save temporary audio files if needed.
-            delete_audio_file (bool): Whether to delete temporary audio files (if created).
-                                      Note: This implementation sends bytes directly,
-                                      so file saving/deletion might not be primary.
+            config (Dict[str, Any]): Configuration dictionary containing:
+                - base_url (str): Full WebSocket URL (e.g., "wss://127.0.0.1:10095").
+                - output_dir (str, optional): Directory path (currently unused).
+                - hotword (str, optional): Hotword file path or string. Defaults to "".
+                # Other potential configs can be added later if needed
+            delete_audio_file (bool): Currently unused by this provider.
         """
-        self.host = config.get("host", "localhost")
-        self.port = config.get("port", 10095)
-        self.mode = config.get("mode", "2pass")  # offline, online, 2pass
+        base_url = config.get("base_url")
+        self.output_dir_config = config.get("output_dir", "tmp/") # Store but might not use
+        if not base_url:
+            raise ValueError("Missing 'base_url' in ASRProvider config for FunASR_Docker")
+
+        parsed_url = urlparse(base_url)
+        self.ssl_enabled = parsed_url.scheme == "wss"
+        self.host = parsed_url.hostname
+        self.port = parsed_url.port
+
+        if not self.host or not self.port:
+             raise ValueError(f"Could not parse host/port from base_url: {base_url}")
+
+        # Keep other parameters as defaults for now
+        self.mode = config.get("mode", "2pass")  # Example: allow override later if needed
         self.chunk_size = config.get("chunk_size", [5, 10, 5])
         self.chunk_interval = config.get("chunk_interval", 10)
         self.encoder_chunk_look_back = config.get("encoder_chunk_look_back", 4)
         self.decoder_chunk_look_back = config.get("decoder_chunk_look_back", 0)
-        self.hotword = config.get("hotword", "")
+        self.hotword = config.get("hotword", "") # Allow hotword config
         self.use_itn = config.get("use_itn", True)
-        self.ssl_enabled = config.get("ssl", True)
-        # self.output_dir = config.get("output_dir") # Not strictly needed if sending bytes
-        # self.delete_audio_file = delete_audio_file # Not strictly needed
 
-        self.uri = self._build_uri()
+        # self.delete_audio_file = delete_audio_file # Store if needed later
+
+        self.uri = base_url # Use the full base_url as the URI
         self.ssl_context = self._build_ssl_context()
         self.hotword_msg = self._prepare_hotword_msg()
 
@@ -63,8 +85,10 @@ class ASRProvider():
 
     def _build_uri(self) -> str:
         """Builds the WebSocket URI."""
-        protocol = "wss" if self.ssl_enabled else "ws"
-        return f"{protocol}://{self.host}:{self.port}"
+        # Now redundant as we take base_url directly
+        # protocol = "wss" if self.ssl_enabled else "ws"
+        # return f"{protocol}://{self.host}:{self.port}"
+        return self.uri
 
     def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
         """Builds the SSL context if SSL is enabled."""
@@ -105,14 +129,41 @@ class ASRProvider():
                 hotword_msg = self.hotword
         return hotword_msg
 
-    async def speech_to_text(self, audio_data: bytes, session_id: str, wav_name: str = "session_audio") -> Tuple[Optional[str], Optional[str]]:
+    def save_audio_to_file(self, opus_data: List[bytes], session_id: str) -> str:
+        """将Opus音频数据解码并保存为WAV文件"""
+        file_name = f"asr_{session_id}_{uuid.uuid4()}.wav"
+        # Use the configured output directory
+        os.makedirs(self.output_dir_config, exist_ok=True)
+        file_path = os.path.join(self.output_dir_config, file_name)
+
+        try:
+            decoder = opuslib_next.Decoder(16000, 1)  # 16kHz, 单声道
+            pcm_data = []
+            for opus_packet in opus_data:
+                    pcm_frame = decoder.decode(opus_packet, 960)  # 960 samples = 60ms
+                    pcm_data.append(pcm_frame)
+
+            with wave.open(file_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)  # 2 bytes = 16-bit
+                wf.setframerate(16000)
+                wf.writeframes(b"".join(pcm_data))
+            logger.bind(tag=TAG, session=session_id).debug(f"Opus data saved to WAV file: {file_path}")
+            return file_path
+        except opuslib_next.OpusError as e:
+            logger.bind(tag=TAG, session=session_id).error(f"Opus decoding error during save: {e}", exc_info=True)
+            raise # Re-raise exception as saving failed
+        except Exception as e:
+            logger.bind(tag=TAG, session=session_id).error(f"Failed to save Opus data to WAV: {e}", exc_info=True)
+            raise # Re-raise exception
+
+    async def speech_to_text(self, opus_data: List[bytes], session_id: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Performs speech-to-text on the given audio data using FunASR Docker.
+        Performs speech-to-text on the given Opus audio data using FunASR Docker.
 
         Args:
-            audio_data (bytes): Raw PCM audio data (16kHz, 16-bit mono).
+            opus_data (List[bytes]): List of Opus audio packets.
             session_id (str): Identifier for the current session (used for logging).
-            wav_name (str): Name to associate with the audio segment (sent to server).
 
         Returns:
             Tuple[Optional[str], Optional[str]]: A tuple containing:
@@ -123,6 +174,30 @@ class ASRProvider():
         result_text: Optional[str] = None
         final_result_received = asyncio.Event()
         accumulated_text = ""
+
+        # --- Decode Opus to PCM --- Start ---
+        pcm_data = []
+        try:
+            decoder = opuslib_next.Decoder(16000, 1) # 16kHz, 1 channel
+            logger.bind(tag=TAG, session=session_id).debug("Decoding Opus packets to PCM...")
+            total_opus_bytes = 0
+            for opus_packet in opus_data:
+                total_opus_bytes += len(opus_packet)
+                pcm_frame = decoder.decode(opus_packet, 960) # frame_size=960 for 60ms at 16kHz
+                pcm_data.append(pcm_frame)
+            audio_data = b"".join(pcm_data)
+            logger.bind(tag=TAG, session=session_id).debug(f"Decoded {total_opus_bytes} Opus bytes to {len(audio_data)} PCM bytes.")
+        except opuslib_next.OpusError as e:
+            logger.bind(tag=TAG, session=session_id).error(f"Opus decoding failed: {e}", exc_info=True)
+            return None, None # Cannot proceed without PCM data
+        except Exception as e:
+             logger.bind(tag=TAG, session=session_id).error(f"An unexpected error occurred during Opus decoding: {e}", exc_info=True)
+             return None, None
+        # --- Decode Opus to PCM --- End ---
+
+        if not audio_data:
+             logger.bind(tag=TAG, session=session_id).warning("Opus decoding resulted in empty PCM data.")
+             return None, None
 
         try:
             logger.bind(tag=TAG, session=session_id).debug(f"Connecting to FunASR Docker at {self.uri}")
@@ -141,9 +216,9 @@ class ASRProvider():
                     "chunk_interval": self.chunk_interval,
                     "encoder_chunk_look_back": self.encoder_chunk_look_back,
                     "decoder_chunk_look_back": self.decoder_chunk_look_back,
-                    "audio_fs": 16000, # Assuming 16kHz PCM input
-                    "wav_name": wav_name,
-                    "wav_format": "pcm", # Sending raw PCM bytes
+                    "audio_fs": 16000, # We send 16kHz PCM
+                    "wav_name": f"session_{session_id}",
+                    "wav_format": "pcm", # We send PCM
                     "is_speaking": True,
                     "hotwords": self.hotword_msg,
                     "itn": self.use_itn,
@@ -162,65 +237,48 @@ class ASRProvider():
                                 meg = json.loads(message)
                                 text = meg.get("text", "")
                                 mode = meg.get("mode", "")
-                                is_final = meg.get("is_final", False) # Check for explicit final flag if server sends one
+                                is_final = meg.get("is_final", False)
 
-                                # Accumulate text based on mode
                                 if mode == "online":
-                                    # Append only the new part if possible, otherwise replace
-                                    # (Simple accumulation for now)
-                                    accumulated_text += text # May need smarter handling based on server behavior
+                                    accumulated_text += text
                                 elif mode == "offline":
-                                    accumulated_text = text # Offline usually sends full result
-                                    final_result_received.set() # Signal final result for offline
+                                    accumulated_text = text
+                                    final_result_received.set()
                                 elif mode == "2pass-online":
-                                    # Handle 2pass online updates (might need adjustment)
-                                    accumulated_text += text # Simple accumulation
+                                    accumulated_text += text
                                 elif mode == "2pass-offline":
-                                    # Handle 2pass offline final result
-                                    accumulated_text = text # Assume final result replaces previous
-                                    final_result_received.set() # Signal final result
+                                    accumulated_text = text
+                                    final_result_received.set()
                                 else:
-                                     # Fallback for unknown modes or messages without mode
                                     accumulated_text += text
 
                                 logger.bind(tag=TAG, session=session_id).info(f"Partial/Final Result ({mode}): {text}")
 
-                                # If server explicitly marks finality or mode suggests it
                                 if is_final or mode in ["offline", "2pass-offline"]:
                                      final_result_received.set()
-                                     break # Stop listening once final result is confirmed
-
+                                     break
 
                             except json.JSONDecodeError:
                                 logger.bind(tag=TAG, session=session_id).warning(f"Received non-JSON message: {message}")
                             except Exception as e:
                                 logger.bind(tag=TAG, session=session_id).error(f"Error processing message: {e}", exc_info=True)
-                                final_result_received.set() # Signal error to stop waiting
+                                final_result_received.set()
                                 break
                     except websockets.exceptions.ConnectionClosedOK:
                         logger.bind(tag=TAG, session=session_id).info("WebSocket connection closed normally by server.")
-                        final_result_received.set() # Ensure waiting task unblocks
+                        final_result_received.set()
                     except websockets.exceptions.ConnectionClosedError as e:
                         logger.bind(tag=TAG, session=session_id).error(f"WebSocket connection closed with error: {e}", exc_info=True)
-                        final_result_received.set() # Ensure waiting task unblocks
+                        final_result_received.set()
                     except Exception as e:
                         logger.bind(tag=TAG, session=session_id).error(f"Error in receive loop: {e}", exc_info=True)
-                        final_result_received.set() # Ensure waiting task unblocks
-
+                        final_result_received.set()
 
                 receive_task = asyncio.create_task(receive_messages())
 
                 # 3. Send audio data in chunks
-                # Calculate stride based on chunk_size[1] and chunk_interval
-                # chunk_size[1] = 10ms block size? chunk_interval = 10? -> 60 * 10 / 10 = 60ms?
-                # Let's assume chunk_size[1] is the duration in ms for the processing chunk
-                # Let chunk_interval be the sending interval multiplier
-                # Sample Rate = 16000 Hz (16 samples per ms)
-                # Bytes per sample = 2 (16-bit)
-                # Stride in ms = 60 * chunk_size[1] / chunk_interval
-                # Stride in bytes = Stride in ms * 16 samples/ms * 2 bytes/sample
                 stride_ms = 60 * self.chunk_size[1] / self.chunk_interval
-                stride = int(stride_ms * 16 * 2)
+                stride = int(stride_ms * 16 * 2) # 16kHz, 16-bit (2 bytes)
                 logger.bind(tag=TAG, session=session_id).debug(f"Audio chunk stride: {stride} bytes ({stride_ms} ms)")
 
                 total_bytes = len(audio_data)
@@ -234,9 +292,14 @@ class ASRProvider():
                     await websocket.send(chunk)
                     bytes_sent += len(chunk)
                     logger.bind(tag=TAG, session=session_id).debug(f"Sent audio chunk: {len(chunk)} bytes / Total sent: {bytes_sent}")
-
-                    # Simulate sleep based on audio duration sent, adjust if needed
-                    await asyncio.sleep(stride_ms / 1000.0 * 0.8) # Sleep slightly less than chunk duration
+                    # await asyncio.sleep(stride_ms / 1000.0 * 0.8) <-- Original sleep
+                    # --- Conditional sleep based on mode --- Start ---
+                    # if self.mode == "offline":
+                    #     await asyncio.sleep(0.001) # Minimal sleep for offline mode, similar to original script
+                    # else:
+                        # Simulate real-time for online/2pass modes
+                        # await asyncio.sleep(stride_ms / 1000.0 * 0.8)
+                    # --- Conditional sleep based on mode --- End ---
 
                 end_time = time.time()
                 logger.bind(tag=TAG, session=session_id).info(f"Finished sending {bytes_sent} bytes of audio data in {end_time - start_time:.2f} seconds.")
@@ -249,12 +312,12 @@ class ASRProvider():
                 # 5. Wait for the final result from the receiving task
                 logger.bind(tag=TAG, session=session_id).info("Waiting for final recognition result...")
                 try:
-                     await asyncio.wait_for(final_result_received.wait(), timeout=30.0) # Add timeout
-                     result_text = accumulated_text # Use the text accumulated by the receiver task
+                     await asyncio.wait_for(final_result_received.wait(), timeout=30.0)
+                     result_text = accumulated_text
                      logger.bind(tag=TAG, session=session_id).info(f"Final result received: {result_text}")
                 except asyncio.TimeoutError:
                      logger.bind(tag=TAG, session=session_id).error("Timeout waiting for final result from server.")
-                     result_text = accumulated_text # Return whatever was accumulated
+                     result_text = accumulated_text
 
                 # 6. Ensure receiver task is cleaned up
                 receive_task.cancel()
@@ -262,7 +325,6 @@ class ASRProvider():
                     await receive_task
                 except asyncio.CancelledError:
                     logger.bind(tag=TAG, session=session_id).debug("Receive task cancelled successfully.")
-
 
         except websockets.exceptions.InvalidURI as e:
             logger.bind(tag=TAG, session=session_id).error(f"Invalid WebSocket URI: {self.uri} - {e}", exc_info=True)
@@ -277,74 +339,16 @@ class ASRProvider():
             logger.bind(tag=TAG, session=session_id).error(f"An error occurred during ASR: {e}", exc_info=True)
             result_text = None # Or return partial: accumulated_text
         finally:
-            if websocket and not websocket.closed:
-                await websocket.close()
-                logger.bind(tag=TAG, session=session_id).info("WebSocket connection closed.")
+            # The `async with websockets.connect(...)` block handles closing the connection
+            # automatically upon exiting the block (normally or due to an exception inside it).
+            # Therefore, explicitly closing it again in this outer finally block is usually
+            # unnecessary and can sometimes cause issues if the connection state is unexpected.
+            # We keep the finally block in case we need other cleanup later, but remove the ws close logic.
+            # if websocket and websocket.open: # <-- Incorrect check: use .open attribute
+            #     await websocket.close()
+            #     # logger.bind(tag=TAG, session=session_id).info("WebSocket connection closed.")
+            #     logging.info(f"[{session_id}] WebSocket connection closed.")
+            pass # No explicit websocket closing needed here due to async with
 
         # Return the final text and None for file path
         return result_text, None
-
-# --- Test Main Block ---
-async def main_test():
-    """Main function for testing the ASRProvider."""
-    # --- Configuration ---
-    # IMPORTANT: Replace with your actual FunASR Docker server details and audio file path
-    test_config = {
-        "host": "127.0.0.1",  # IP address where FunASR Docker WS is running
-        "port": 10095,        # Port number
-        "ssl": False,         # Set to True if your server uses wss://
-        "mode": "offline",      # Or "offline", "online"
-        "hotword": ""         # Optional: path to hotword file or hotword string
-        # Add other parameters if needed (chunk_size, etc.)
-    }
-    # Path to a test WAV file (must be 16kHz, 16-bit mono PCM for this example)
-    # You might need to convert your audio file first
-    test_audio_path = "../../../tmp/1.mp3" #<---- IMPORTANT: REPLACE WITH YOUR FILE
-
-    if not os.path.exists(test_audio_path):
-         print(f"Error: Test audio file not found at '{test_audio_path}'")
-         print(f"Please replace '{test_audio_path}' with the path to a valid 16kHz, 16-bit mono WAV file.")
-         return
-
-    # --- Initialization ---
-    provider = ASRProvider(config=test_config)
-
-    # --- Read Audio Data ---
-    try:
-        with wave.open(test_audio_path, 'rb') as wf:
-            # Verify audio format (optional but recommended)
-            if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getframerate() != 16000:
-                print(f"Error: Audio file '{test_audio_path}' is not 16kHz, 16-bit mono PCM.")
-                return
-            audio_bytes = wf.readframes(wf.getnframes())
-            print(f"Read {len(audio_bytes)} bytes from {test_audio_path}")
-    except wave.Error as e:
-        print(f"Error reading WAV file: {e}")
-        return
-    except Exception as e:
-        print(f"An unexpected error occurred reading the audio file: {e}")
-        return
-
-
-    # --- Perform ASR ---
-    session_id = "test_session_001"
-    print(f"\nPerforming ASR for session: {session_id}...")
-    start_asr_time = time.time()
-    text_result, _ = await provider.speech_to_text(audio_bytes, session_id=session_id, wav_name=os.path.basename(test_audio_path))
-    end_asr_time = time.time()
-
-
-    # --- Print Result ---
-    if text_result is not None:
-        print(f"\nASR Result: {text_result}")
-    else:
-        print("\nASR failed.")
-
-    print(f"ASR processing time: {end_asr_time - start_asr_time:.2f} seconds")
-
-
-if __name__ == "__main__":
-    print("Running FunASR Docker ASR Provider Test...")
-    # Setup basic logging for the test
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    asyncio.run(main_test())

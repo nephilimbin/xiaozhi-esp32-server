@@ -349,6 +349,8 @@ def one_thread(id, chunk_begin, chunk_size):
 
 if __name__ == "__main__":
     # for microphone
+    import time
+    start_time = time.time()
     if args.audio_in is None:
         p = Process(target=one_thread, args=(0, 0, 0))
         p.start()
@@ -392,3 +394,5 @@ if __name__ == "__main__":
             p.join()
 
         print("end")
+        end_time = time.time()
+        print(f"Total time taken: {end_time - start_time} seconds")
