@@ -19,14 +19,14 @@ class AudioMessageHandler(BaseMessageHandler):
         """Handles raw audio bytes using context."""
         try:
             audio = message
-            logger.bind(tag=TAG).debug(f"[handle] Inside handle. Received audio chunk size: {len(audio)}") # Log entry
+            # logger.bind(tag=TAG).debug(f"[handle] Inside handle. Received audio chunk size: {len(audio)}") 
 
             # Directly use context attributes
             if not context.asr_server_receive:
-                logger.bind(tag=TAG).debug("[handle] Exiting early: context.asr_server_receive is False.") # Log check
+                logger.bind(tag=TAG).debug("[handle] Exiting early: context.asr_server_receive is False.") 
                 return
-
-            have_voice = False # Default value
+            # Default value
+            have_voice = False 
             try:
                 # Use context attributes and pass context/conn_handler to dependencies if needed
                 if context.client_listen_mode == "auto":
@@ -36,7 +36,7 @@ class AudioMessageHandler(BaseMessageHandler):
                     logger.bind(tag=TAG).debug(f"[handle] VAD result: {have_voice}") # Log VAD result
                 else:
                     have_voice = context.client_have_voice
-                    logger.bind(tag=TAG).debug(f"[handle] Mode manual, have_voice from context: {have_voice}") # Log manual mode
+                    logger.bind(tag=TAG).debug(f"[handle] Mode manual, have_voice from context: {have_voice}") 
 
             except Exception as vad_err:
                 logger.bind(tag=TAG).error(f"[handle] Error during VAD check: {vad_err}", exc_info=True)
@@ -122,7 +122,6 @@ class AudioMessageHandler(BaseMessageHandler):
 
     async def no_voice_close_connect(self, context: 'HandlerContext'):
         """Handles logic for closing connection due to prolonged silence (uses context)"""
-        # Remove conn = context alias
 
         if context.client_no_voice_last_time == 0.0:
             context.client_no_voice_last_time = time.time() * 1000

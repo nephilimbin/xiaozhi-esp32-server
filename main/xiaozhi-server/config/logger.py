@@ -56,6 +56,8 @@ def setup_logging():
     data_dir = log_config.get("data_dir", "data")
 
     os.makedirs(log_dir, exist_ok=True)
+    if not os.path.exists(log_file):
+        os.makedirs(log_dir, exist_ok=True)
     os.makedirs(data_dir, exist_ok=True)
 
     # 配置日志输出

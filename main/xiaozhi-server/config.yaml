@@ -7,7 +7,7 @@
 # #############################以下是服务器基本运行配置####################################
 server:
   # 服务器监听地址和端口(Server listening address and port)
-  ip: 0.0.0.0
+  ip: 127.0.0.1
   port: 8000
   # 认证配置
   auth:
@@ -52,8 +52,12 @@ enable_stop_tts_notify: false
 # 说完话是否开启提示音，音效地址
 stop_tts_notify_voice: 'config/assets/tts_notify.mp3'
 
-# 设置TTS输出格式，可选值为 'mp3_file' 或 'opus_stream'【测试】
-tts_output_format: 'opus_stream' # 可选值为 'opus_stream' 或 'opus_stream'
+# 设置TTS输出格式，可选值为 'mp3_file' 或 'opus_stream'
+tts_output_format: 'mp3_file'
+# TTS重试次数
+tts_max_retries: 3
+# TTS重试间隔(秒)
+tts_retry_delay_seconds: 0.1
 
 exit_commands:
   - '退出'

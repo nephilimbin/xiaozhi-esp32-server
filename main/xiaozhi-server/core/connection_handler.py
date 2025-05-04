@@ -235,7 +235,6 @@ class ConnectionHandler:
         if self.client_ip_info is not None and "city" in self.client_ip_info:
             self.logger.bind(tag=TAG).info(f"Client ip info: {self.client_ip_info}")
             self.prompt = self.prompt + f"\nuser location:{self.client_ip_info}"
-
             self.dialogue.update_system_message(self.prompt)
 
     def _initialize_memory(self):
@@ -339,18 +338,5 @@ class ConnectionHandler:
             q.queue.clear()
             # 添加毒丸信号到队列，确保线程退出
             # q.queue.put(None)
-
-
-    # TODO 关联SendAudioHandler 暂时未用到
-    # def chat_and_close(self, text):
-    #     """Chat with the user and then close the connection"""
-    #     try:
-    #         # Use the existing chat method
-    #         self.chat(text)
-
-    #         # After chat is complete, close the connection
-    #         self.close_after_chat = True
-    #     except Exception as e:
-    #         self.logger.bind(tag=TAG).error(f"Chat and close error: {str(e)}")
 
     

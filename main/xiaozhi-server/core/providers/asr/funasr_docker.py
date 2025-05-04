@@ -25,7 +25,7 @@ import time
 from urllib.parse import urlparse # <-- Add urlparse
 import opuslib_next # <-- Add opuslib
 import uuid # <-- Add uuid
-
+import re # <-- Add re
 from .base import ASRProviderBase # <-- Restore base class import
 from config.logger import setup_logging # <-- Restore project logger import
 
@@ -140,8 +140,8 @@ class ASRProvider(ASRProviderBase):
             decoder = opuslib_next.Decoder(16000, 1)  # 16kHz, 单声道
             pcm_data = []
             for opus_packet in opus_data:
-                    pcm_frame = decoder.decode(opus_packet, 960)  # 960 samples = 60ms
-                    pcm_data.append(pcm_frame)
+                pcm_frame = decoder.decode(opus_packet, 960)  # 960 samples = 60ms
+                pcm_data.append(pcm_frame)
 
             with wave.open(file_path, "wb") as wf:
                 wf.setnchannels(1)
@@ -194,6 +194,27 @@ class ASRProvider(ASRProviderBase):
              logger.bind(tag=TAG, session=session_id).error(f"An unexpected error occurred during Opus decoding: {e}", exc_info=True)
              return None, None
         # --- Decode Opus to PCM --- End ---
+
+        # --- Asynchronously save decoded PCM to WAV --- Start ---
+        async def _async_save_wav_task(pcm_audio_data: bytes, file_session_id: str):
+            """Asynchronously save PCM data to a WAV file."""
+            file_name = f"asr_{file_session_id}_{uuid.uuid4()}.wav"
+            # Ensure output directory exists (though it should from __init__)
+            os.makedirs(self.output_dir_config, exist_ok=True)
+            file_path = os.path.join(self.output_dir_config, file_name)
+            try:
+                with wave.open(file_path, "wb") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)  # 2 bytes = 16-bit
+                    wf.setframerate(16000)
+                    wf.writeframes(pcm_audio_data)
+                logger.bind(tag=TAG, session=file_session_id).debug(f"Async: Decoded audio saved to {file_path}")
+            except Exception as e:
+                logger.bind(tag=TAG, session=file_session_id).error(f"Async: Failed to save decoded audio to {file_path}: {e}", exc_info=True)
+
+        # Launch the saving task in the background without waiting for it
+        asyncio.create_task(_async_save_wav_task(audio_data, session_id))
+        # --- Asynchronously save decoded PCM to WAV --- End ---
 
         if not audio_data:
              logger.bind(tag=TAG, session=session_id).warning("Opus decoding resulted in empty PCM data.")
@@ -292,14 +313,6 @@ class ASRProvider(ASRProviderBase):
                     await websocket.send(chunk)
                     bytes_sent += len(chunk)
                     logger.bind(tag=TAG, session=session_id).debug(f"Sent audio chunk: {len(chunk)} bytes / Total sent: {bytes_sent}")
-                    # await asyncio.sleep(stride_ms / 1000.0 * 0.8) <-- Original sleep
-                    # --- Conditional sleep based on mode --- Start ---
-                    # if self.mode == "offline":
-                    #     await asyncio.sleep(0.001) # Minimal sleep for offline mode, similar to original script
-                    # else:
-                        # Simulate real-time for online/2pass modes
-                        # await asyncio.sleep(stride_ms / 1000.0 * 0.8)
-                    # --- Conditional sleep based on mode --- End ---
 
                 end_time = time.time()
                 logger.bind(tag=TAG, session=session_id).info(f"Finished sending {bytes_sent} bytes of audio data in {end_time - start_time:.2f} seconds.")
@@ -312,12 +325,20 @@ class ASRProvider(ASRProviderBase):
                 # 5. Wait for the final result from the receiving task
                 logger.bind(tag=TAG, session=session_id).info("Waiting for final recognition result...")
                 try:
-                     await asyncio.wait_for(final_result_received.wait(), timeout=30.0)
-                     result_text = accumulated_text
-                     logger.bind(tag=TAG, session=session_id).info(f"Final result received: {result_text}")
+                    await asyncio.wait_for(final_result_received.wait(), timeout=30.0)
+                    result_text = accumulated_text
+                    # 5. 格式化处理<|zh|><|NEUTRAL|><|Speech|> 删除<>及其里面的内容
+                    if result_text is not None:
+                        result_text = re.sub(r'<\|.*?\|>', '', result_text).strip()
+                    logger.bind(tag=TAG, session=session_id).info(f"Final result received: {result_text}")
                 except asyncio.TimeoutError:
-                     logger.bind(tag=TAG, session=session_id).error("Timeout waiting for final result from server.")
-                     result_text = accumulated_text
+                    logger.bind(tag=TAG, session=session_id).error("Timeout waiting for final result from server.")
+                    # 5. 格式化处理<|zh|><|NEUTRAL|><|Speech|> 删除<>及其里面的内容
+                    if result_text is not None:
+                        result_text = re.sub(r'<\|.*?\|>', '', result_text).strip()
+                    result_text = accumulated_text
+                    logger.bind(tag=TAG, session=session_id).info(f"Final result received: {result_text}")
+
 
                 # 6. Ensure receiver task is cleaned up
                 receive_task.cancel()
@@ -338,17 +359,5 @@ class ASRProvider(ASRProviderBase):
         except Exception as e:
             logger.bind(tag=TAG, session=session_id).error(f"An error occurred during ASR: {e}", exc_info=True)
             result_text = None # Or return partial: accumulated_text
-        finally:
-            # The `async with websockets.connect(...)` block handles closing the connection
-            # automatically upon exiting the block (normally or due to an exception inside it).
-            # Therefore, explicitly closing it again in this outer finally block is usually
-            # unnecessary and can sometimes cause issues if the connection state is unexpected.
-            # We keep the finally block in case we need other cleanup later, but remove the ws close logic.
-            # if websocket and websocket.open: # <-- Incorrect check: use .open attribute
-            #     await websocket.close()
-            #     # logger.bind(tag=TAG, session=session_id).info("WebSocket connection closed.")
-            #     logging.info(f"[{session_id}] WebSocket connection closed.")
-            pass # No explicit websocket closing needed here due to async with
-
         # Return the final text and None for file path
         return result_text, None

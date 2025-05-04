@@ -618,12 +618,8 @@ class HandlerContext:
             return None, text, text_index
 
         tts_file = None
-        max_retries = self.config.get(
-            "tts_max_retries", 2
-        )  
-        retry_delay = self.config.get(
-            "tts_retry_delay_seconds", 0.1
-        ) 
+        max_retries = self.config.get("tts_max_retries", 3)  
+        retry_delay = self.config.get("tts_retry_delay_seconds", 0.1) 
 
         for attempt in range(max_retries + 1):
             try:
@@ -632,9 +628,7 @@ class HandlerContext:
                 )
                 tts_file = self.tts.to_tts(text)
                 if tts_file is not None:
-                    self.logger.bind(tag=TAG).debug(
-                        f"[speak_and_play] TTS success on attempt {attempt + 1} for index {text_index}: {tts_file}"
-                    )
+                    self.logger.bind(tag=TAG).debug(f"[speak_and_play] TTS success on attempt {attempt + 1} for index {text_index}: {tts_file}")
                     break  # Success, exit loop
                 else:
                     # Handle case where to_tts returns None without raising an exception (might indicate non-retryable issue)
